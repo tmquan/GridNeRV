@@ -143,7 +143,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ),
         )
 
@@ -159,7 +159,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ),
         )
 
@@ -175,7 +175,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ), 
         )
 
@@ -198,10 +198,9 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         cameras = make_cameras(dist, elev, azim)
         ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
         ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
-        # ndc_points = self.zyx.repeat(batchsz, 1, 1, 1, 1) 
-
+        
         # Generate camera intrinsics and extrinsics
-        reprojection = cameras.get_world_to_view_transform().inverse()
+        reprojection = cameras.get_ndc_camera_transform().inverse()
         ndc_points = reprojection.transform_points(ray_points)
         resampled_voxels = F.grid_sample(
             clarity,
