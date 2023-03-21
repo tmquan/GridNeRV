@@ -189,7 +189,24 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             max_depth=6.0,
         )        
 
+    # Custom trilinear interpolation function
+    def trilinear_interpolation(self, points, values, grid):
+        B, N, _ = points.shape
+        B, C, D, H, W = grid.shape
+        points_expanded = points.view(B, N, 1, 1, 1, 3)
+        grid_expanded = grid.view(B, 1, D, H, W, 3)
 
+        diff = points_expanded - grid_expanded
+        dist = torch.norm(diff, dim=-1)
+        weights = torch.exp(-dist**2 / (2 * 0.1**2))
+
+        values_expanded = values.view(B, N, 1, 1, 1, C)
+        weights_expanded = weights.view(B, N, D, H, W, 1)
+
+        output = torch.sum(values_expanded * weights_expanded, dim=1) / torch.sum(weights_expanded, dim=1)
+        return output
+
+    
     def forward(self, figures, azim, elev, n_views=2, n_pts_per_ray=256):
         clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.shape, self.shape, self.shape)
         
@@ -199,61 +216,69 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         dist = 4.0 * torch.ones(batchsz, device=_device)
         cameras = make_cameras(dist, elev, azim)
         ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
-        # ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
-        # take out the interesting parts of ray_bundle
-        rays_origins_world = ray_bundle.origins
-        rays_directions_world = ray_bundle.directions
-        rays_lengths = ray_bundle.lengths
-
-        # validate the inputs
-        _validate_ray_bundle_variables(
-            rays_origins_world, rays_directions_world, rays_lengths
-        )
+        ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
         
-        #########################################################
-        # 1) convert the origins/directions to the local coords #
-        #########################################################
-        # init an empty volume centered around [0.5, 0.5, 0.5] in world coordinates
-        # with a voxel size of 1.0.
-        initial_volumes = Volumes(
-            features = torch.zeros_like(clarity),
-            densities = torch.zeros_like(clarity),
-            # volume_translation = [-0.5, -0.5, -0.5],
-            voxel_size = 3.0 / self.shape,
+        ray_values = clarity.view(batchsz, -1, 1)
+        ndcgrid = self.zyx.unsqueeze(0).repeat(batchsz, 1, 1, 1, 1)
+        clarity = self.trilinear_interpolation(
+            points=ray_points,
+            values=ray_values, 
+            grid=ndcgrid
         )
+        # # take out the interesting parts of ray_bundle
+        # rays_origins_world = ray_bundle.origins
+        # rays_directions_world = ray_bundle.directions
+        # rays_lengths = ray_bundle.lengths
+
+        # # validate the inputs
+        # _validate_ray_bundle_variables(
+        #     rays_origins_world, rays_directions_world, rays_lengths
+        # )
         
-        # origins are mapped with the world_to_local transform of the volumes
-        rays_origins_local = initial_volumes.world_to_local_coords(rays_origins_world)
+        # #########################################################
+        # # 1) convert the origins/directions to the local coords #
+        # #########################################################
+        # # init an empty volume centered around [0.5, 0.5, 0.5] in world coordinates
+        # # with a voxel size of 1.0.
+        # initial_volumes = Volumes(
+        #     features = torch.zeros_like(clarity),
+        #     densities = torch.zeros_like(clarity),
+        #     # volume_translation = [-0.5, -0.5, -0.5],
+        #     voxel_size = 3.0 / self.shape,
+        # )
+        
+        # # origins are mapped with the world_to_local transform of the volumes
+        # rays_origins_local = initial_volumes.world_to_local_coords(rays_origins_world)
 
-        # obtain the Transform3d object that transforms ray directions to local coords
-        # directions_transform = self._get_ray_directions_transform()
-        """
-        Compose the ray-directions transform by removing the translation component
-        from the volume global-to-local coords transform.
-        """
-        world2local = initial_volumes.get_world_to_local_coords_transform().get_matrix()
-        directions_transform_matrix = eyes(
-            4,
-            N=world2local.shape[0],
-            device=world2local.device,
-            dtype=world2local.dtype,
-        )
-        directions_transform_matrix[:, :3, :3] = world2local[:, :3, :3]
-        directions_transform = Transform3d(matrix=directions_transform_matrix)
+        # # obtain the Transform3d object that transforms ray directions to local coords
+        # # directions_transform = self._get_ray_directions_transform()
+        # """
+        # Compose the ray-directions transform by removing the translation component
+        # from the volume global-to-local coords transform.
+        # """
+        # world2local = initial_volumes.get_world_to_local_coords_transform().get_matrix()
+        # directions_transform_matrix = eyes(
+        #     4,
+        #     N=world2local.shape[0],
+        #     device=world2local.device,
+        #     dtype=world2local.dtype,
+        # )
+        # directions_transform_matrix[:, :3, :3] = world2local[:, :3, :3]
+        # directions_transform = Transform3d(matrix=directions_transform_matrix)
 
-        # transform the directions to the local coords
-        rays_directions_local = directions_transform.transform_points(
-            rays_directions_world.view(rays_lengths.shape[0], -1, 3)
-        ).view(rays_directions_world.shape)
+        # # transform the directions to the local coords
+        # rays_directions_local = directions_transform.transform_points(
+        #     rays_directions_world.view(rays_lengths.shape[0], -1, 3)
+        # ).view(rays_directions_world.shape)
 
-        ############################
-        # 2) obtain the ray points #
-        ############################
+        # ############################
+        # # 2) obtain the ray points #
+        # ############################
 
-        # this op produces a fairly big tensor (minibatch, ..., n_samples_per_ray, 3)
-        rays_points_local = ray_bundle_variables_to_ray_points(
-            rays_origins_local, rays_directions_local, rays_lengths
-        )
+        # # this op produces a fairly big tensor (minibatch, ..., n_samples_per_ray, 3)
+        # rays_points_local = ray_bundle_variables_to_ray_points(
+        #     rays_origins_local, rays_directions_local, rays_lengths
+        # )
 
 
         # # Generate camera intrinsics and extrinsics
@@ -267,22 +292,23 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         #     align_corners=True
         # )
         
-        # init a random point cloud
-        pointclouds = Pointclouds(
-            # points=torch.randn(4, 100, 3), features=torch.rand(4, 100, 5)
-            points=rays_points_local.view(batchsz, -1, 3), features=clarity.view(batchsz, -1, 1) 
-        )
+        # # init a random point cloud
+        # pointclouds = Pointclouds(
+        #     # points=torch.randn(4, 100, 3), features=torch.rand(4, 100, 5)
+        #     points=rays_points_local.view(batchsz, -1, 3), features=clarity.view(batchsz, -1, 1) 
+        # )
         
-        # add the pointcloud to the 'initial_volumes' buffer using
-        # trilinear splatting
-        updated_volumes = add_pointclouds_to_volumes(
-            pointclouds=pointclouds,
-            initial_volumes=initial_volumes,
-            mode="trilinear",
-            rescale_features=False, 
-        )
-        # cast back the clarity
-        clarity = updated_volumes.features
+        # # add the pointcloud to the 'initial_volumes' buffer using
+        # # trilinear splatting
+        # updated_volumes = add_pointclouds_to_volumes(
+        #     pointclouds=pointclouds,
+        #     initial_volumes=initial_volumes,
+        #     mode="trilinear",
+        #     rescale_features=False, 
+        # )
+        
+        # # cast back the clarity
+        # clarity = updated_volumes.features
         
         # Multiview can stack along batch dimension, last dimension is for X-ray
         clarity_ct, clarity_xr = torch.split(clarity, n_views)
