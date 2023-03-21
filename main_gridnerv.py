@@ -15,10 +15,12 @@ torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 from pytorch3d.renderer.cameras import FoVPerspectiveCameras, look_at_view_transform
-from pytorch3d.renderer.implicit.utils import ray_bundle_to_ray_points
+from pytorch3d.renderer.implicit.utils import ray_bundle_to_ray_points, _validate_ray_bundle_variables, ray_bundle_variables_to_ray_points
 from pytorch3d.renderer import VolumeRenderer, NDCMultinomialRaysampler
 from pytorch3d.structures import Pointclouds, Volumes
+from pytorch3d.transforms import Transform3d
 from pytorch3d.ops import add_pointclouds_to_volumes
+from pytorch3d.ops.utils import eyes
 
 from diffusers import UNet2DModel
 from lightning_fabric.utilities.seed import seed_everything
@@ -197,8 +199,63 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         dist = 4.0 * torch.ones(batchsz, device=_device)
         cameras = make_cameras(dist, elev, azim)
         ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
-        ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
+        # ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
+        # take out the interesting parts of ray_bundle
+        rays_origins_world = ray_bundle.origins
+        rays_directions_world = ray_bundle.directions
+        rays_lengths = ray_bundle.lengths
+
+        # validate the inputs
+        _validate_ray_bundle_variables(
+            rays_origins_world, rays_directions_world, rays_lengths
+        )
         
+        #########################################################
+        # 1) convert the origins/directions to the local coords #
+        #########################################################
+        # init an empty volume centered around [0.5, 0.5, 0.5] in world coordinates
+        # with a voxel size of 1.0.
+        initial_volumes = Volumes(
+            features = torch.zeros_like(clarity),
+            densities = torch.zeros_like(clarity),
+            # volume_translation = [-0.5, -0.5, -0.5],
+            voxel_size = 3.0 / self.shape,
+        )
+        
+        # origins are mapped with the world_to_local transform of the volumes
+        rays_origins_local = initial_volumes.world_to_local_coords(rays_origins_world)
+
+        # obtain the Transform3d object that transforms ray directions to local coords
+        # directions_transform = self._get_ray_directions_transform()
+        """
+        Compose the ray-directions transform by removing the translation component
+        from the volume global-to-local coords transform.
+        """
+        world2local = initial_volumes.get_world_to_local_coords_transform().get_matrix()
+        directions_transform_matrix = eyes(
+            4,
+            N=world2local.shape[0],
+            device=world2local.device,
+            dtype=world2local.dtype,
+        )
+        directions_transform_matrix[:, :3, :3] = world2local[:, :3, :3]
+        directions_transform = Transform3d(matrix=directions_transform_matrix)
+
+        # transform the directions to the local coords
+        rays_directions_local = directions_transform.transform_points(
+            rays_directions_world.view(rays_lengths.shape[0], -1, 3)
+        ).view(rays_directions_world.shape)
+
+        ############################
+        # 2) obtain the ray points #
+        ############################
+
+        # this op produces a fairly big tensor (minibatch, ..., n_samples_per_ray, 3)
+        rays_points_local = ray_bundle_variables_to_ray_points(
+            rays_origins_local, rays_directions_local, rays_lengths
+        )
+
+
         # # Generate camera intrinsics and extrinsics
         # reprojection = cameras.get_ndc_camera_transform().inverse()
         # ndc_points = reprojection.transform_points(ray_points)
@@ -213,28 +270,22 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         # init a random point cloud
         pointclouds = Pointclouds(
             # points=torch.randn(4, 100, 3), features=torch.rand(4, 100, 5)
-            points=ray_points.view(batchsz, -1, 3), features=clarity.view(batchsz, -1, 3) 
+            points=rays_points_local.view(batchsz, -1, 3), features=clarity.view(batchsz, -1, 1) 
         )
-        # init an empty volume centered around [0.5, 0.5, 0.5] in world coordinates
-        # with a voxel size of 1.0.
-        initial_volumes = Volumes(
-            features = torch.zeros_like(clarity),
-            densities = torch.zeros_like(clarity),
-            # volume_translation = [-0.5, -0.5, -0.5],
-            voxel_size = 3.0 / self.shape,
-        )
+        
         # add the pointcloud to the 'initial_volumes' buffer using
         # trilinear splatting
         updated_volumes = add_pointclouds_to_volumes(
             pointclouds=pointclouds,
             initial_volumes=initial_volumes,
             mode="trilinear",
+            rescale_features=False, 
         )
         # cast back the clarity
         clarity = updated_volumes.features
         
         # Multiview can stack along batch dimension, last dimension is for X-ray
-        clarity_ct, clarity_xr = torch.split(resampled_voxels, n_views)
+        clarity_ct, clarity_xr = torch.split(clarity, n_views)
         clarity_ct = clarity_ct.mean(dim=0, keepdim=True)
         clarity = torch.cat([clarity_ct, clarity_xr])
 
