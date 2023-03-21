@@ -63,7 +63,7 @@ class DirectVolumeRenderer(nn.Module):
             features=features,
             densities=densities,
             voxel_size= 3.0 / shape,
-            # volume_translation = [-0.5, -0.5, -0.5],
+            volume_translation = [-0.5, -0.5, -0.5],
         )
         # screen_RGBA, ray_bundles = self.renderer(cameras=cameras, volumes=volumes) #[...,:3]
         # rays_points = ray_bundle_to_ray_points(ray_bundles)
