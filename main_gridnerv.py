@@ -90,9 +90,9 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         if self.sh > 0:
             from rsh import rsh_cart_2, rsh_cart_3
             # Generate grid
-            zs = torch.linspace(-1, 1, steps=self.shape)
-            ys = torch.linspace(-1, 1, steps=self.shape)
-            xs = torch.linspace(-1, 1, steps=self.shape)
+            zs = torch.linspace(0, 1, steps=self.shape)
+            ys = torch.linspace(0, 1, steps=self.shape)
+            xs = torch.linspace(0, 1, steps=self.shape)
             z, y, x = torch.meshgrid(zs, ys, xs)
             zyx = torch.stack([z, y, x], dim=-1) # torch.Size([100, 100, 100, 3])
             if self.sh==2: 
@@ -143,7 +143,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ),
         )
 
@@ -159,7 +159,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ),
         )
 
@@ -175,7 +175,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ), 
         )
 
