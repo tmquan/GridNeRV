@@ -199,17 +199,40 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
         ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
         
-        # Generate camera intrinsics and extrinsics
-        reprojection = cameras.get_ndc_camera_transform().inverse()
-        ndc_points = reprojection.transform_points(ray_points)
-        resampled_voxels = F.grid_sample(
-            clarity,
-            ndc_points.view(-1, self.shape, self.shape, self.shape, 3),
-            mode='bilinear', 
-            padding_mode='zeros', 
-            align_corners=True
+        # # Generate camera intrinsics and extrinsics
+        # reprojection = cameras.get_ndc_camera_transform().inverse()
+        # ndc_points = reprojection.transform_points(ray_points)
+        # resampled_voxels = F.grid_sample(
+        #     clarity,
+        #     ndc_points.view(-1, self.shape, self.shape, self.shape, 3),
+        #     mode='bilinear', 
+        #     padding_mode='zeros', 
+        #     align_corners=True
+        # )
+        
+        # init a random point cloud
+        pointclouds = Pointclouds(
+            # points=torch.randn(4, 100, 3), features=torch.rand(4, 100, 5)
+            points=ray_points.view(batchsz, -1, 3), features=clarity.view(batchsz, -1, 3) 
         )
-
+        # init an empty volume centered around [0.5, 0.5, 0.5] in world coordinates
+        # with a voxel size of 1.0.
+        initial_volumes = Volumes(
+            features = torch.zeros_like(clarity),
+            densities = torch.zeros_like(clarity),
+            # volume_translation = [-0.5, -0.5, -0.5],
+            voxel_size = 3.0 / self.shape,
+        )
+        # add the pointcloud to the 'initial_volumes' buffer using
+        # trilinear splatting
+        updated_volumes = add_pointclouds_to_volumes(
+            pointclouds=pointclouds,
+            initial_volumes=initial_volumes,
+            mode="trilinear",
+        )
+        # cast back the clarity
+        clarity = updated_volumes.features
+        
         # Multiview can stack along batch dimension, last dimension is for X-ray
         clarity_ct, clarity_xr = torch.split(resampled_voxels, n_views)
         clarity_ct = clarity_ct.mean(dim=0, keepdim=True)
