@@ -144,7 +144,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ),
         )
 
@@ -160,7 +160,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ),
         )
 
@@ -176,7 +176,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ), 
         )
 
@@ -244,19 +244,19 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
         ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
         
-        ray_values = clarity.view(batchsz, -1, 1)
-        ndc_points = self.zyx.unsqueeze(0).repeat(batchsz, 1, 1, 1, 1).view(batchsz, -1, 3)
-        ndc_values = self.resample_pointcloud_features(
-            source_features=ray_values,
-            source_pointclouds=ray_points, 
-            target_pointclouds=ndc_points, 
-            k=1
+        # Generate camera intrinsics and extrinsics
+        itransform = cameras.get_ndc_camera_transform().inverse()
+        ndc_points = itransform.transform_points(ray_points)
+        ndc_values = F.grid_sample(
+            clarity,
+            ndc_points.view(-1, self.shape, self.shape, self.shape, 3),
+            mode='bilinear', 
+            padding_mode='zeros', 
+            align_corners=True
         )
-        # print(ndc_values.shape)
-        clarity = ndc_values.permute(0, 2, 1).view(batchsz, 1, self.shape, self.shape, self.shape)
         
         # Multiview can stack along batch dimension, last dimension is for X-ray
-        clarity_ct, clarity_xr = torch.split(clarity, n_views)
+        clarity_ct, clarity_xr = torch.split(ndc_values, n_views)
         clarity_ct = clarity_ct.mean(dim=0, keepdim=True)
         clarity = torch.cat([clarity_ct, clarity_xr])
 
