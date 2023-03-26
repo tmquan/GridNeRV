@@ -188,51 +188,6 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             max_depth=6.0,
         )        
 
-    
-    def resample_pointcloud_features(self, 
-                                     source_features, 
-                                     source_pointclouds, 
-                                     target_pointclouds, 
-                                     k=3, 
-                                     is_ndc=True,
-                                     ):
-        """
-        Resample features from source_pointclouds to target_pointclouds using KNN.
-        
-        Args:
-        - source_features: Tensor of shape (B, N, C) representing the features of source point clouds.
-        - source_pointclouds: Tensor of shape (B, N, 3) representing the source point clouds.
-        - target_pointclouds: Tensor of shape (B, M, 3) representing the target point clouds.
-        - k: Number of nearest neighbors to consider (default: 3).
-
-        Returns:
-        - target_values: Tensor of shape (B, M, C) representing the resampled features in target point clouds.
-        """
-        # Find the nearest neighbors in the source point cloud for each point in the target point cloud
-        knn_result = knn_points(target_pointclouds, source_pointclouds, K=k)
-
-        # Get the nearest neighbor indices (shape: (B, M, k))
-        nearest_neighbor_indices = knn_result.idx
-
-        # Get the distances to the nearest neighbors (shape: (B, M, k))
-        distances = knn_result.dists
-
-        # Compute the inverse distance weights (shape: (B, M, k))
-        weights = 1.0 / (distances + 1e-8)
-        weights_sum = torch.sum(weights, dim=2, keepdim=True)
-        normalized_weights = weights / weights_sum
-
-        # Gather the features of the k nearest neighbors (shape: (B, M, k, C))
-        B, M, C = source_features.shape
-        nearest_neighbor_features = torch.gather(source_features.unsqueeze(1).expand(-1, M, -1, -1),
-                                                 dim=2,
-                                                 index=nearest_neighbor_indices.unsqueeze(-1).expand(-1, -1, -1, C))
-
-        # Interpolate the features using the normalized weights (shape: (B, M, C))
-        target_values = torch.sum(normalized_weights.unsqueeze(-1) * nearest_neighbor_features, dim=2)
-
-        return target_values
-    
     def forward(self, figures, azim, elev, n_views=2, n_pts_per_ray=256):
         clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.shape, self.shape, self.shape)
         
@@ -414,8 +369,8 @@ class GridNeRVLightningModule(LightningModule):
         est_azim_locked, est_elev_locked = torch.split(est_feat_locked, 1, dim=1)
         est_azim_hidden, est_elev_hidden = torch.split(est_feat_hidden, 1, dim=1)
 
-        camera_random = make_cameras(est_dist_random, est_elev_random, est_azim_random)
-        camera_locked = make_cameras(est_dist_locked, est_elev_locked, est_azim_locked)
+        camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
+        camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
         camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden)
 
         # with torch.no_grad():
@@ -429,8 +384,8 @@ class GridNeRVLightningModule(LightningModule):
             est_volume_xr_hidden = torch.split(
                 self.forward_volume(
                     image2d=torch.cat([est_figure_ct_random, src_figure_xr_hidden]),
-                    azim=torch.cat([est_azim_random.view(cam_view), est_azim_hidden.view(cam_view)]),
-                    elev=torch.cat([est_elev_random.view(cam_view), est_elev_hidden.view(cam_view)]),
+                    azim=torch.cat([src_azim_random.view(cam_view), est_azim_hidden.view(cam_view)]),
+                    elev=torch.cat([src_elev_random.view(cam_view), est_elev_hidden.view(cam_view)]),
                     n_views=1
                 ), self.batch_size
             )
@@ -440,8 +395,8 @@ class GridNeRVLightningModule(LightningModule):
             est_volume_xr_hidden = torch.split(
                 self.forward_volume(
                     image2d=torch.cat([est_figure_ct_locked, src_figure_xr_hidden]),
-                    azim=torch.cat([est_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
-                    elev=torch.cat([est_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
+                    azim=torch.cat([src_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
+                    elev=torch.cat([src_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
                     n_views=1
                 ), self.batch_size
             )
@@ -452,8 +407,8 @@ class GridNeRVLightningModule(LightningModule):
             est_volume_xr_hidden = torch.split(
                 self.forward_volume(
                     image2d=torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden]),
-                    azim=torch.cat([est_azim_random.view(cam_view), est_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
-                    elev=torch.cat([est_elev_random.view(cam_view), est_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
+                    azim=torch.cat([src_azim_random.view(cam_view), src_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
+                    elev=torch.cat([src_elev_random.view(cam_view), src_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
                     n_views=2,
                 ), self.batch_size
             )    
@@ -510,8 +465,8 @@ class GridNeRVLightningModule(LightningModule):
                 # Compute generator loss
                 fake_images = torch.cat([rec_figure_ct_random, rec_figure_ct_locked, est_figure_xr_hidden])
                 fake_scores = self.forward_critic(fake_images)
-                # g_loss = -torch.mean(fake_scores)
-                g_loss = F.softplus(-fake_scores).mean()
+                g_loss = torch.mean(-fake_scores)
+                # g_loss = F.softplus(-fake_scores).mean()
                 loss = p_loss + g_loss
                 self.log(f'{stage}_g_loss', g_loss, on_step=(stage=='train'), prog_bar=False, logger=True, sync_dist=True, batch_size=self.batch_size)
             
@@ -525,8 +480,8 @@ class GridNeRVLightningModule(LightningModule):
                 real_scores = self.forward_critic(real_images)
                 fake_images = torch.cat([rec_figure_ct_random, rec_figure_ct_locked, est_figure_xr_hidden])
                 fake_scores = self.forward_critic(fake_images.detach())
-
-                d_loss = F.softplus(-real_scores).mean() + F.softplus(+fake_scores).mean()
+                d_loss = torch.mean(-real_scores) + torch.mean(+fake_scores)
+                # d_loss = F.softplus(-real_scores).mean() + F.softplus(+fake_scores).mean()
                 loss = d_loss 
                 self.log(f'{stage}_d_loss', d_loss, on_step=(stage=='train'), prog_bar=False, logger=True, sync_dist=True, batch_size=self.batch_size)
                 
