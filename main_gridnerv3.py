@@ -30,7 +30,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning import Trainer, LightningModule
 from argparse import ArgumentParser
 from typing import Optional
-from monai.networks.nets import Unet, EfficientNetBN, DenseNet121
+from monai.networks.nets import Unet, EfficientNetBN, DenseNet121, SEResNet101, ViT
 from monai.networks.layers.factories import Norm, Act
 from monai.networks.layers import Reshape
 
@@ -55,20 +55,22 @@ backbones = {
 }
 
 class GridNeRVFrontToBackFrustumFeaturer(nn.Module):
-    def __init__(self, in_channels=1, out_channels=1, backbone="efficientnet-b7"):
+    def __init__(self, in_channels=1, out_channels=1, shape=256, backbone="efficientnet-b7"):
         super().__init__()
-        assert backbone in backbones.keys()
-        self.model = EfficientNetBN(
-            model_name=backbone, #(24, 32, 56, 160, 448)
-            pretrained=True, 
+        self.model = ViT(
             spatial_dims=2,
-            in_channels=in_channels,
+            patch_size=(16, 16),
+            in_channels=1, 
             num_classes=out_channels,
-            adv_prop=True,
+            img_size=(shape,shape), 
+            pos_embed='conv', 
+            classification=True, 
+            post_activation=None,
+            dropout_rate=0.2
         )
-
+        
     def forward(self, figures):
-        camfeat = self.model.forward(figures)
+        camfeat = self.model.forward(figures)[0]
         return camfeat
 
 class GridNeRVFrontToBackInverseRenderer(nn.Module):
@@ -188,6 +190,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             max_depth=6.0,
         )        
 
+    
     def forward(self, figures, azim, elev, n_views=2, n_pts_per_ray=256):
         clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.shape, self.shape, self.shape)
         
@@ -300,11 +303,11 @@ class GridNeRVLightningModule(LightningModule):
         self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
             in_channels=1, 
             out_channels=2, # azim + elev + prob
-            backbone=self.backbone,
+            shape=self.shape
         )
         
-        self.cam_settings.model._fc.weight.data.zero_()
-        self.cam_settings.model._fc.bias.data.zero_()
+        self.cam_settings.model.classification_head.weight.data.zero_()
+        self.cam_settings.model.classification_head.bias.data.zero_()
 
         if self.gan:
             self.critic_model = GridNeRVFrontToBackFrustumFeaturer(
@@ -312,9 +315,8 @@ class GridNeRVLightningModule(LightningModule):
                 out_channels=1, # Bx1x16x16
                 backbone=self.backbone,
             )
-            # self.critic_model.model._fc.weight.data.zero_()
-            # self.critic_model.model._fc.bias.data.zero_()
-
+            self.critic_model.model.classification_head.weight.data.zero_()
+            self.critic_model.model.classification_head.bias.data.zero_()
         self.loss = nn.L1Loss(reduction="mean")
 
     def forward_screen(self, image3d, cameras):   
@@ -347,10 +349,9 @@ class GridNeRVLightningModule(LightningModule):
         src_dist_locked = 4.0 * torch.ones(self.batch_size, device=_device)
         camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
 
-        with torch.no_grad():
-            est_figure_ct_random = self.forward_screen(image3d=image3d, cameras=camera_random)
-            est_figure_ct_locked = self.forward_screen(image3d=image3d, cameras=camera_locked)
-            src_figure_xr_hidden = image2d
+        est_figure_ct_random = self.forward_screen(image3d=image3d, cameras=camera_random)
+        est_figure_ct_locked = self.forward_screen(image3d=image3d, cameras=camera_locked)
+        src_figure_xr_hidden = image2d
 
         est_dist_random = 4.0 * torch.ones(self.batch_size, device=_device)
         est_dist_locked = 4.0 * torch.ones(self.batch_size, device=_device)
@@ -369,12 +370,9 @@ class GridNeRVLightningModule(LightningModule):
         est_azim_locked, est_elev_locked = torch.split(est_feat_locked, 1, dim=1)
         est_azim_hidden, est_elev_hidden = torch.split(est_feat_hidden, 1, dim=1)
 
-        camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
-        camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
+        camera_random = make_cameras(est_dist_random, est_elev_random, est_azim_random)
+        camera_locked = make_cameras(est_dist_locked, est_elev_locked, est_azim_locked)
         camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden)
-
-        # with torch.no_grad():
-        #     est_figure_ct_hidden = self.forward_screen(image3d=image3d, cameras=camera_hidden)
 
         cam_view = [self.batch_size, 1]       
         # Jointly estimate the volumes, single view, random view and multiple views
@@ -384,8 +382,8 @@ class GridNeRVLightningModule(LightningModule):
             est_volume_xr_hidden = torch.split(
                 self.forward_volume(
                     image2d=torch.cat([est_figure_ct_random, src_figure_xr_hidden]),
-                    azim=torch.cat([src_azim_random.view(cam_view), est_azim_hidden.view(cam_view)]),
-                    elev=torch.cat([src_elev_random.view(cam_view), est_elev_hidden.view(cam_view)]),
+                    azim=torch.cat([est_azim_random.view(cam_view), est_azim_hidden.view(cam_view)]),
+                    elev=torch.cat([est_elev_random.view(cam_view), est_elev_hidden.view(cam_view)]),
                     n_views=1
                 ), self.batch_size
             )
@@ -395,8 +393,8 @@ class GridNeRVLightningModule(LightningModule):
             est_volume_xr_hidden = torch.split(
                 self.forward_volume(
                     image2d=torch.cat([est_figure_ct_locked, src_figure_xr_hidden]),
-                    azim=torch.cat([src_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
-                    elev=torch.cat([src_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
+                    azim=torch.cat([est_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
+                    elev=torch.cat([est_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
                     n_views=1
                 ), self.batch_size
             )
@@ -407,8 +405,8 @@ class GridNeRVLightningModule(LightningModule):
             est_volume_xr_hidden = torch.split(
                 self.forward_volume(
                     image2d=torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden]),
-                    azim=torch.cat([src_azim_random.view(cam_view), src_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
-                    elev=torch.cat([src_elev_random.view(cam_view), src_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
+                    azim=torch.cat([est_azim_random.view(cam_view), est_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
+                    elev=torch.cat([est_elev_random.view(cam_view), est_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
                     n_views=2,
                 ), self.batch_size
             )    
@@ -480,11 +478,11 @@ class GridNeRVLightningModule(LightningModule):
                 real_scores = self.forward_critic(real_images)
                 fake_images = torch.cat([rec_figure_ct_random, rec_figure_ct_locked, est_figure_xr_hidden])
                 fake_scores = self.forward_critic(fake_images.detach())
+
                 d_loss = torch.mean(-real_scores) + torch.mean(+fake_scores)
                 # d_loss = F.softplus(-real_scores).mean() + F.softplus(+fake_scores).mean()
-                loss = d_loss 
                 self.log(f'{stage}_d_loss', d_loss, on_step=(stage=='train'), prog_bar=False, logger=True, sync_dist=True, batch_size=self.batch_size)
-                
+                loss = d_loss
             else:
                 loss = p_loss
         else:
