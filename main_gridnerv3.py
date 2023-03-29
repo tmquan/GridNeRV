@@ -454,11 +454,10 @@ class GridNeRVLightningModule(LightningModule):
         self.log(f'{stage}_im2d_loss', im2d_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
         self.log(f'{stage}_im3d_loss', im3d_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
         self.log(f'{stage}_view_loss', view_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
-        p_loss = self.alpha*im3d_loss + self.theta*view_loss + self.gamma*im2d_loss + self.omega*view_cond
+        p_loss = self.alpha*im3d_loss + self.gamma*im2d_loss + self.theta*view_loss + self.omega*view_cond
 
         if self.gan:
-            if optimizer_idx==0:
-                # Compute generator loss
+            if optimizer_idx==0: # generator loss
                 fake_images = torch.cat([rec_figure_ct_random, rec_figure_ct_locked, est_figure_xr_hidden])
                 fake_scores = self.forward_critic(fake_images)
                 g_loss = torch.mean(-fake_scores)
@@ -467,11 +466,9 @@ class GridNeRVLightningModule(LightningModule):
                 self.log(f'{stage}_g_loss', g_loss, on_step=(stage=='train'), prog_bar=False, logger=True, sync_dist=True, batch_size=self.batch_size)
             
             elif optimizer_idx==1:
-                # Clamp parameters to enforce Lipschitz constraint
                 for p in self.critic_model.parameters():
                     p.data.clamp_(-self.clamp_val, self.clamp_val)
                 
-                # Compute discriminator loss
                 real_images = torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden])
                 real_scores = self.forward_critic(real_images)
                 fake_images = torch.cat([rec_figure_ct_random, rec_figure_ct_locked, est_figure_xr_hidden])
@@ -536,16 +533,13 @@ class GridNeRVLightningModule(LightningModule):
         opt_gen = torch.optim.AdamW([
             {'params': self.inv_renderer.parameters()},
             {'params': self.cam_settings.parameters()}
-        ], lr=self.lr, betas=(0.5, 0.999))
+        ], lr=self.lr*1, betas=(0.5, 0.999))
         opt_dis = torch.optim.AdamW([
             {'params': self.critic_model.parameters()},
-        ], lr=self.lr, betas=(0.5, 0.999))
+        ], lr=self.lr*4, betas=(0.5, 0.999))
         sch_gen = torch.optim.lr_scheduler.MultiStepLR(opt_gen, milestones=[100, 200], gamma=0.1)
         sch_dis = torch.optim.lr_scheduler.MultiStepLR(opt_dis, milestones=[100, 200], gamma=0.1)
         return [opt_gen, opt_dis], [sch_gen, sch_dis]
-        # optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
-        # scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
-        # return [optimizer], [scheduler]
 
 if __name__ == "__main__":
     parser = ArgumentParser()
