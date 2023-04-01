@@ -191,7 +191,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             max_depth=6.0,
         )        
 
-    def forward(self, figures, azim, elev, n_views=2, n_pts_per_ray=256):
+    def forward(self, figures, azim, elev, n_views=2):
         clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.shape, self.shape, self.shape)
         
         # Process (resample) the clarity from ray views to ndc
@@ -199,7 +199,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         batchsz = figures.shape[0]
         dist = 4.0 * torch.ones(batchsz, device=_device)
         cameras = make_cameras(dist, elev, azim)
-        ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
+        ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.n_pts_per_ray)
         ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
         
         # Generate camera intrinsics and extrinsics
@@ -295,15 +295,16 @@ class GridNeRVLightningModule(LightningModule):
             in_channels=2, 
             out_channels=9 if self.sh==2 else 16 if self.sh==3 else 1, 
             shape=self.shape, 
+            n_pts_per_ray=self.n_pts_per_ray,
             sh=self.sh, 
             pe=self.pe,
-            backbone=self.backbone,
+            backbone="efficientnet-b7",
         )
 
         self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
             in_channels=1, 
             out_channels=2, # azim + elev + prob
-            backbone=self.backbone,
+            backbone="efficientnet-b7",
         )
         
         self.cam_settings.model._fc.weight.data.zero_()
@@ -313,7 +314,7 @@ class GridNeRVLightningModule(LightningModule):
             self.critic_model = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
                 out_channels=1, # Bx1x16x16
-                backbone=self.backbone,
+                backbone="efficientnet-b7",
             )
             # self.critic_model.model._fc.weight.data.zero_()
             # self.critic_model.model._fc.bias.data.zero_()
@@ -576,7 +577,7 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt", type=str, default=None, help="path to checkpoint")
     parser.add_argument("--logsdir", type=str, default='logsfrecaling', help="logging directory")
     parser.add_argument("--datadir", type=str, default='data', help="data directory")
-    parser.add_argument("--backbone", type=str, default='efficientnet-b5', help="Backbone for network")
+    parser.add_argument("--backbone", type=str, default='efficientnet-b7', help="Backbone for network")
     parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
     
     parser = Trainer.add_argparse_args(parser)
