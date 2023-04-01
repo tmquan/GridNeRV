@@ -298,13 +298,13 @@ class GridNeRVLightningModule(LightningModule):
             n_pts_per_ray=self.n_pts_per_ray,
             sh=self.sh, 
             pe=self.pe,
-            backbone="efficientnet-b7",
+            backbone=self.backbone,
         )
 
         self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
             in_channels=1, 
             out_channels=2, # azim + elev + prob
-            backbone="efficientnet-b7",
+            backbone=self.backbone,
         )
         
         self.cam_settings.model._fc.weight.data.zero_()
