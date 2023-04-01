@@ -137,8 +137,6 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 spatial_dims=3,
                 in_channels=1+pe_channels,
                 out_channels=1,
-                
-            pretrained=False,
                 backbone=backbone,
                 decoder_channels=backbones[backbone][::-1],
                 upsample="pixelshuffle",
@@ -154,8 +152,6 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 spatial_dims=3,
                 in_channels=2+pe_channels,
                 out_channels=1,
-                
-            pretrained=False,
                 backbone=backbone,
                 decoder_channels=backbones[backbone][::-1],
                 upsample="pixelshuffle",
@@ -171,8 +167,6 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 spatial_dims=3,
                 in_channels=3+pe_channels,
                 out_channels=out_channels,
-                
-            pretrained=False,
                 backbone=backbone,
                 decoder_channels=backbones[backbone][::-1],
                 upsample="pixelshuffle",
@@ -614,8 +608,7 @@ if __name__ == "__main__":
             # swa_callback
         ],
         accumulate_grad_batches=4,
-        # strategy="ddp_sharded", #"horovod", #"deepspeed", #"ddp_sharded",
-        strategy="ddp_sharded",  # "colossalai", "fsdp", #"ddp_sharded", #"horovod", #"deepspeed", #"ddp_sharded",
+        strategy="ddp_sharded",  # "colossalai", # "fsdp", # "ddp_sharded", # "horovod", # "deepspeed"
         # plugins=DDPStrategy(find_unused_parameters=False),
         precision=16 if hparams.amp else 32,
         # gradient_clip_val=0.01, 
