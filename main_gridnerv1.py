@@ -495,6 +495,7 @@ class GridNeRVLightningModule(LightningModule):
             optimizer_d.step()
             optimizer_d.zero_grad()
             self.untoggle_optimizer(optimizer_d)
+            return p_loss + c_loss
 
     def training_step(self, batch, batch_idx, optimizer_idx=None):
         loss = self._common_step(batch, batch_idx, optimizer_idx, stage='train')
@@ -584,7 +585,7 @@ if __name__ == "__main__":
 
     # Callback
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.cam)}",
+        dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}",
         # filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
         monitor="validation_loss_epoch",
         auto_insert_metric_name=True, 
@@ -596,7 +597,7 @@ if __name__ == "__main__":
 
     # Logger
     tensorboard_logger = TensorBoardLogger(
-        save_dir=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.cam)}", 
+        save_dir=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}", 
         log_graph=True
     )
     swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
