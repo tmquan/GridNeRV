@@ -13,7 +13,7 @@ if need_monai:
     os.system("pip install monai[all] -U")
 
 #
-need_pytorch_lightning=True
+need_pytorch_lightning=False
 try:
     import pytorch_lightning
 except ModuleNotFoundError:
