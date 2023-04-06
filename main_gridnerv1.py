@@ -292,7 +292,7 @@ class GridNeRVLightningModule(LightningModule):
             backbone=self.backbone,
         )
 
-        if self.cam:
+        if self.cam or self.gan:
             self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
                 out_channels=2, # azim + elev + prob
@@ -326,6 +326,9 @@ class GridNeRVLightningModule(LightningModule):
     def forward_camera(self, image2d):
         return self.cam_settings(image2d * 2.0 - 1.0)
 
+    def forward_critic(self, image2d):
+        return self.critic_model(image2d * 2.0 - 1.0)
+    
     def _common_step(self, batch, batch_idx, optimizer_idx, stage: Optional[str] = 'evaluation'):
         _device = batch["image3d"].device
         image3d = batch["image3d"]
@@ -438,23 +441,31 @@ class GridNeRVLightningModule(LightningModule):
         
             c_loss = self.gamma*im2d_loss + self.theta*view_loss + self.omega*view_cond
 
+
+        if batch_idx==0:
+            viz2d = torch.cat([
+                        torch.cat([image3d[..., self.shape//2, :], 
+                                   est_figure_ct_random,
+                                   est_figure_ct_locked,
+                                   ], dim=-2).transpose(2, 3),
+                        torch.cat([est_volume_ct_locked[..., self.shape//2, :],
+                                   rec_figure_ct_random,
+                                   rec_figure_ct_locked,
+                                   ], dim=-2).transpose(2, 3),
+                        torch.cat([image2d, 
+                                   est_volume_xr_hidden[..., self.shape//2, :],
+                                   est_figure_xr_hidden,
+                                   ], dim=-2).transpose(2, 3),
+                    ], dim=-2)
+            grid = torchvision.utils.make_grid(viz2d, normalize=False, scale_each=False, nrow=1, padding=0)
+            tensorboard = self.logger.experiment
+            tensorboard.add_image(f'{stage}_samples', grid.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
+        
+
         if not self.cam and not self.gan:
-            loss = p_loss
+            return p_loss
         elif self.cam:
-            optimizer_u, optimizer_c = self.optimizers()
-            self.toggle_optimizer(optimizer_u)
-            loss = p_loss
-            self.manual_backward(loss)
-            optimizer_u.step()
-            optimizer_u.zero_grad()
-            self.untoggle_optimizer(optimizer_u)
-            
-            self.toggle_optimizer(optimizer_c)
-            loss = c_loss        
-            self.manual_backward(loss)
-            optimizer_c.step()
-            optimizer_c.zero_grad()
-            self.untoggle_optimizer(optimizer_c)
+            return p_loss + c_loss
         elif self.gan:
             optimizer_g, optimizer_d = self.optimizers()
             # generator loss
@@ -485,27 +496,6 @@ class GridNeRVLightningModule(LightningModule):
             optimizer_d.zero_grad()
             self.untoggle_optimizer(optimizer_d)
 
-        if batch_idx==0:
-            viz2d = torch.cat([
-                        torch.cat([image3d[..., self.shape//2, :], 
-                                   est_figure_ct_random,
-                                   est_figure_ct_locked,
-                                   ], dim=-2).transpose(2, 3),
-                        torch.cat([est_volume_ct_locked[..., self.shape//2, :],
-                                   rec_figure_ct_random,
-                                   rec_figure_ct_locked,
-                                   ], dim=-2).transpose(2, 3),
-                        torch.cat([image2d, 
-                                   est_volume_xr_hidden[..., self.shape//2, :],
-                                   est_figure_xr_hidden,
-                                   ], dim=-2).transpose(2, 3),
-                    ], dim=-2)
-            grid = torchvision.utils.make_grid(viz2d, normalize=False, scale_each=False, nrow=1, padding=0)
-            tensorboard = self.logger.experiment
-            tensorboard.add_image(f'{stage}_samples', grid.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
-        
-        return loss
-
     def training_step(self, batch, batch_idx, optimizer_idx=None):
         loss = self._common_step(batch, batch_idx, optimizer_idx, stage='train')
         self.train_step_outputs.append(loss)
@@ -534,11 +524,10 @@ class GridNeRVLightningModule(LightningModule):
             return [optimizer], [scheduler]
         elif self.cam:
             # If --cam is set, optimize Unprojector and Camera model using 2 optimizers
-            optimizer_u = torch.optim.AdamW(self.inv_renderer.parameters(), lr=self.lr, betas=(0.5, 0.999))
-            optimizer_c = torch.optim.AdamW(self.cam_settings.parameters(), lr=self.lr, betas=(0.5, 0.999))
-            scheduler_u = torch.optim.lr_scheduler.MultiStepLR(optimizer_u, milestones=[100, 200], gamma=0.1)
-            scheduler_c = torch.optim.lr_scheduler.MultiStepLR(optimizer_c, milestones=[100, 200], gamma=0.1)
-            return [optimizer_u, optimizer_c], [scheduler_u, scheduler_c]
+            optimizer = torch.optim.AdamW(list(self.inv_renderer.parameters()) 
+                                        + list(self.cam_settings.parameters()), lr=self.lr, betas=(0.5, 0.999))
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
+            return [optimizer], [scheduler]
         elif self.gan:
             # If --gan is set, optimize Unprojector, Camera as generator, and Discriminator with 2 optimizers
             optimizer_g = torch.optim.AdamW(list(self.inv_renderer.parameters()) 
@@ -595,7 +584,7 @@ if __name__ == "__main__":
 
     # Callback
     checkpoint_callback = ModelCheckpoint(
-        dirpath=hparams.logsdir,
+        dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.cam)}",
         # filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
         monitor="validation_loss_epoch",
         auto_insert_metric_name=True, 
@@ -619,7 +608,7 @@ if __name__ == "__main__":
             checkpoint_callback,
             # swa_callback
         ],
-        # accumulate_grad_batches=4,
+        accumulate_grad_batches=4 if not hparams.cam and not hparams.gan else 1,
         strategy="auto", 
         # plugins=DDPStrategy(find_unused_parameters=False),
         precision=16 if hparams.amp else 32,
