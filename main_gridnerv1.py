@@ -424,7 +424,7 @@ class GridNeRVLightningModule(LightningModule):
 
         p_loss = self.gamma*im2d_loss + self.alpha*im3d_loss
         
-        if self.cam:   
+        if self.cam or self.gan:
             view_loss_ct_random = self.loss(torch.cat([src_azim_random, src_elev_random]), 
                                             torch.cat([est_azim_random, est_elev_random]))
             view_loss_ct_locked = self.loss(torch.cat([src_azim_locked, src_elev_locked]), 
@@ -595,7 +595,10 @@ if __name__ == "__main__":
     lr_callback = LearningRateMonitor(logging_interval='step')
 
     # Logger
-    tensorboard_logger = TensorBoardLogger(save_dir=hparams.logsdir, log_graph=True)
+    tensorboard_logger = TensorBoardLogger(
+        save_dir=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.cam)}", 
+        log_graph=True
+    )
     swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
     # Init model with callbacks
     trainer = Trainer(
