@@ -140,42 +140,42 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 backbone=backbone,
                 decoder_channels=backbones[backbone][::-1],
                 upsample="pixelshuffle",
-                interp_mode="trilinear",
+                # interp_mode="trilinear",
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ),
         )
 
-        self.mixture_net = nn.Sequential(
-            FlexibleUNet(
-                spatial_dims=3,
-                in_channels=2+pe_channels,
-                out_channels=1,
-                backbone=backbone,
-                decoder_channels=backbones[backbone][::-1],
-                upsample="pixelshuffle",
-                interp_mode="trilinear",
-                act=("LeakyReLU", {"inplace": True}),
-                norm=Norm.BATCH,
-                dropout=0.2,
-            ),
-        )
+        # self.mixture_net = nn.Sequential(
+        #     FlexibleUNet(
+        #         spatial_dims=3,
+        #         in_channels=2+pe_channels,
+        #         out_channels=1,
+        #         backbone=backbone,
+        #         decoder_channels=backbones[backbone][::-1],
+        #         upsample="pixelshuffle",
+        #         # interp_mode="trilinear",
+        #         act=("LeakyReLU", {"inplace": True}),
+        #         norm=Norm.BATCH,
+        #         # dropout=0.2,
+        #     ),
+        # )
 
-        self.refiner_net = nn.Sequential(
-            FlexibleUNet(
-                spatial_dims=3,
-                in_channels=3+pe_channels,
-                out_channels=out_channels,
-                backbone=backbone,
-                decoder_channels=backbones[backbone][::-1],
-                upsample="pixelshuffle",
-                interp_mode="trilinear",
-                act=("LeakyReLU", {"inplace": True}),
-                norm=Norm.BATCH,
-                dropout=0.2,
-            ), 
-        )
+        # self.refiner_net = nn.Sequential(
+        #     FlexibleUNet(
+        #         spatial_dims=3,
+        #         in_channels=3+pe_channels,
+        #         out_channels=out_channels,
+        #         backbone=backbone,
+        #         decoder_channels=backbones[backbone][::-1],
+        #         upsample="pixelshuffle",
+        #         # interp_mode="trilinear",
+        #         act=("LeakyReLU", {"inplace": True}),
+        #         norm=Norm.BATCH,
+        #         # dropout=0.2,
+        #     ), 
+        # )
 
         self.raysampler = NDCMultinomialRaysampler(  
             image_width=self.shape,
@@ -213,13 +213,15 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         clarity = torch.cat([clarity_ct, clarity_xr])
 
         if self.pe > 0:
-            density = self.density_net(torch.cat([self.encoded.repeat(clarity.shape[0], 1, 1, 1, 1), clarity], dim=1))
-            mixture = self.mixture_net(torch.cat([self.encoded.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density], dim=1))
-            shcoeff = self.refiner_net(torch.cat([self.encoded.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density, mixture], dim=1))
+            shcoeff = self.density_net(torch.cat([self.encoded.repeat(clarity.shape[0], 1, 1, 1, 1), clarity], dim=1))
+            # density = self.density_net(torch.cat([self.encoded.repeat(clarity.shape[0], 1, 1, 1, 1), clarity], dim=1))
+            # mixture = self.mixture_net(torch.cat([self.encoded.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density], dim=1))
+            # shcoeff = self.refiner_net(torch.cat([self.encoded.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density, mixture], dim=1))
         else:
-            density = self.density_net(torch.cat([clarity], dim=1))
-            mixture = self.mixture_net(torch.cat([clarity, density], dim=1))
-            shcoeff = self.refiner_net(torch.cat([clarity, density, mixture], dim=1))
+            shcoeff = self.density_net(torch.cat([clarity], dim=1))
+            # density = self.density_net(torch.cat([clarity], dim=1))
+            # mixture = self.mixture_net(torch.cat([clarity, density], dim=1))
+            # shcoeff = self.refiner_net(torch.cat([clarity, density, mixture], dim=1))
 
         if self.sh > 0:
             # shcomps = shcoeff*self.shbasis.repeat(clarity.shape[0], 1, 1, 1, 1) 

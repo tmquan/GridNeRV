@@ -187,7 +187,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             min_depth=2.0,
             max_depth=6.0,
         )        
-    
+
     def forward(self, figures, azim, elev, n_views=2, n_pts_per_ray=256):
         clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.shape, self.shape, self.shape)
         
@@ -297,23 +297,14 @@ class GridNeRVLightningModule(LightningModule):
             backbone=self.backbone,
         )
 
-        # self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
-        #     in_channels=1, 
-        #     out_channels=2, # azim + elev + prob
-        #     backbone=self.backbone,
-        # )
+        self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
+            in_channels=1, 
+            out_channels=2, # azim + elev + prob
+            backbone=self.backbone,
+        )
         
-        # self.cam_settings.model._fc.weight.data.zero_()
-        # self.cam_settings.model._fc.bias.data.zero_()
-
-        if self.gan:
-            self.critic_model = GridNeRVFrontToBackFrustumFeaturer(
-                in_channels=1, 
-                out_channels=1, # Bx1x16x16
-                backbone=self.backbone,
-            )
-            # self.critic_model.model._fc.weight.data.zero_()
-            # self.critic_model.model._fc.bias.data.zero_()
+        self.cam_settings.model._fc.weight.data.zero_()
+        self.cam_settings.model._fc.bias.data.zero_()
 
         self.loss = nn.L1Loss(reduction="mean")
 
@@ -326,15 +317,14 @@ class GridNeRVLightningModule(LightningModule):
     def forward_camera(self, image2d):
         return self.cam_settings(image2d * 2.0 - 1.0)
 
-    def forward_critic(self, image2d):
-        return self.critic_model(image2d * 2.0 - 1.0)
-
     def _common_step(self, batch, batch_idx, optimizer_idx, stage: Optional[str] = 'evaluation'):
         _device = batch["image3d"].device
         image3d = batch["image3d"]
         image2d = batch["image2d"]
             
         # Construct the random cameras
+        # src_azim_random = torch.randn(self.batch_size, device=_device).clamp_(-0.9, 0.9)
+        # src_elev_random = torch.randn(self.batch_size, device=_device).clamp_(-0.9, 0.9)
         src_azim_random = torch.distributions.uniform.Uniform(-1, 1).sample([self.batch_size]).to(_device) 
         src_elev_random = torch.distributions.uniform.Uniform(-1, 1).sample([self.batch_size]).to(_device) 
         src_dist_random = 4.0 * torch.ones(self.batch_size, device=_device)
@@ -349,48 +339,39 @@ class GridNeRVLightningModule(LightningModule):
         est_figure_ct_locked = self.forward_screen(image3d=image3d, cameras=camera_locked)
         src_figure_xr_hidden = image2d
 
-        src_azim_hidden = torch.zeros(self.batch_size, device=_device)
-        src_elev_hidden = torch.zeros(self.batch_size, device=_device)
-        src_dist_hidden = 4.0 * torch.ones(self.batch_size, device=_device)
-        camera_hidden = make_cameras(src_dist_hidden, src_elev_hidden, src_azim_hidden)
+        est_dist_random = 4.0 * torch.ones(self.batch_size, device=_device)
+        est_dist_locked = 4.0 * torch.ones(self.batch_size, device=_device)
+        est_dist_hidden = 4.0 * torch.ones(self.batch_size, device=_device)
+        
+        # Reconstruct the cameras
+        est_feat_random, \
+        est_feat_locked, \
+        est_feat_hidden = torch.split(
+            self.forward_camera(
+                image2d=torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden])
+            ), self.batch_size
+        )
+
+        est_azim_random, est_elev_random = torch.split(est_feat_random, 1, dim=1)
+        est_azim_locked, est_elev_locked = torch.split(est_feat_locked, 1, dim=1)
+        est_azim_hidden, est_elev_hidden = torch.split(est_feat_hidden, 1, dim=1)
+
+        camera_random = make_cameras(est_dist_random, est_elev_random, est_azim_random)
+        camera_locked = make_cameras(est_dist_locked, est_elev_locked, est_azim_locked)
+        camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden)
 
         cam_view = [self.batch_size, 1]       
-        # Jointly estimate the volumes, single view, random view and multiple views
-        rng_figure = torch.randint(low=0, high=3, size=(1, 1))
-        if stage=='train' and rng_figure==1:
-            est_volume_ct_random, \
-            est_volume_xr_hidden = torch.split(
-                self.forward_volume(
-                    image2d=torch.cat([est_figure_ct_random, src_figure_xr_hidden]),
-                    azim=torch.cat([src_azim_random.view(cam_view), src_azim_hidden.view(cam_view)]),
-                    elev=torch.cat([src_elev_random.view(cam_view), src_elev_hidden.view(cam_view)]),
-                    n_views=1
-                ), self.batch_size
-            )
-            est_volume_ct_locked = est_volume_ct_random
-        elif stage=='train' and rng_figure==2:
-            est_volume_ct_locked, \
-            est_volume_xr_hidden = torch.split(
-                self.forward_volume(
-                    image2d=torch.cat([est_figure_ct_locked, src_figure_xr_hidden]),
-                    azim=torch.cat([src_azim_locked.view(cam_view), src_azim_hidden.view(cam_view)]),
-                    elev=torch.cat([src_elev_locked.view(cam_view), src_elev_hidden.view(cam_view)]),
-                    n_views=1
-                ), self.batch_size
-            )
-            est_volume_ct_random = est_volume_ct_locked
-        else:
-            est_volume_ct_random, \
+        est_volume_ct_random, \
             est_volume_ct_locked, \
             est_volume_xr_hidden = torch.split(
                 self.forward_volume(
                     image2d=torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden]),
-                    azim=torch.cat([src_azim_random.view(cam_view), src_azim_locked.view(cam_view), src_azim_hidden.view(cam_view)]),
-                    elev=torch.cat([src_elev_random.view(cam_view), src_elev_locked.view(cam_view), src_elev_hidden.view(cam_view)]),
+                    azim=torch.cat([est_azim_random.view(cam_view), est_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
+                    elev=torch.cat([est_elev_random.view(cam_view), est_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
                     n_views=2,
                 ), self.batch_size
-            )    
-           
+            )  
+            
         # Reconstruct the appropriate XR
         rec_figure_ct_random = self.forward_screen(image3d=est_volume_ct_random[:,1:], cameras=camera_random)
         rec_figure_ct_locked = self.forward_screen(image3d=est_volume_ct_locked[:,1:], cameras=camera_locked)
@@ -413,47 +394,38 @@ class GridNeRVLightningModule(LightningModule):
 
         im3d_loss_ct_random = self.loss(image3d, est_volume_ct_random) + self.loss(image3d, mid_volume_ct_random) 
         im3d_loss_ct_locked = self.loss(image3d, est_volume_ct_locked) + self.loss(image3d, mid_volume_ct_locked) 
+    
+        view_loss_ct_random = self.loss(torch.cat([src_azim_random, src_elev_random]), 
+                                        torch.cat([est_azim_random, est_elev_random]))
+        view_loss_ct_locked = self.loss(torch.cat([src_azim_locked, src_elev_locked]), 
+                                        torch.cat([est_azim_locked, est_elev_locked]))
 
         im2d_loss_ct = im2d_loss_ct_random + im2d_loss_ct_locked 
         im2d_loss_xr = im2d_loss_xr_hidden
         im3d_loss_ct = im3d_loss_ct_random + im3d_loss_ct_locked
+        view_loss_ct = view_loss_ct_random + view_loss_ct_locked
+
+        view_cond_xr = self.loss(est_azim_hidden, torch.zeros_like(est_azim_hidden)) \
+                     + self.loss(est_elev_hidden, torch.zeros_like(est_elev_hidden))
 
         im2d_loss = im2d_loss_ct + im2d_loss_xr
         im3d_loss = im3d_loss_ct
         
+        view_loss = view_loss_ct 
+        view_cond = view_cond_xr
+
         self.log(f'{stage}_im2d_loss', im2d_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
         self.log(f'{stage}_im3d_loss', im3d_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
-        p_loss = self.alpha*im3d_loss + self.gamma*im2d_loss 
-        
-        if self.gan:
-            if optimizer_idx==0:
-                # Compute generator loss
-                fake_images = torch.cat([rec_figure_ct_random, rec_figure_ct_locked, est_figure_xr_hidden])
-                fake_scores = self.forward_critic(fake_images)
-                # g_loss = -torch.mean(fake_scores)
-                g_loss = F.softplus(-fake_scores).mean()
-                loss = p_loss + g_loss
-                self.log(f'{stage}_g_loss', g_loss, on_step=(stage=='train'), prog_bar=False, logger=True, sync_dist=True, batch_size=self.batch_size)
-            
-            elif optimizer_idx==1:
-                # Clamp parameters to enforce Lipschitz constraint
-                for p in self.critic_model.parameters():
-                    p.data.clamp_(-self.clamp_val, self.clamp_val)
-                
-                # Compute discriminator loss
-                real_images = torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden])
-                real_scores = self.forward_critic(real_images)
-                fake_images = torch.cat([rec_figure_ct_random, rec_figure_ct_locked, est_figure_xr_hidden])
-                fake_scores = self.forward_critic(fake_images.detach())
+        self.log(f'{stage}_view_loss', view_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
+        p_loss = self.gamma*im2d_loss + self.alpha*im3d_loss
+        c_loss = self.gamma*im2d_loss + self.theta*view_loss + self.omega*view_cond
 
-                d_loss = F.softplus(-real_scores).mean() + F.softplus(+fake_scores).mean()
-                loss = d_loss 
-                self.log(f'{stage}_d_loss', d_loss, on_step=(stage=='train'), prog_bar=False, logger=True, sync_dist=True, batch_size=self.batch_size)
-                
-            else:
-                loss = p_loss
-        else:
+        if optimizer_idx==0: # generator loss
             loss = p_loss
+        elif optimizer_idx==1:
+            loss = c_loss
+        else:
+            loss = p_loss + c_loss
 
         if batch_idx==0:
             viz2d = torch.cat([
@@ -504,16 +476,13 @@ class GridNeRVLightningModule(LightningModule):
     def configure_optimizers(self):
         opt_gen = torch.optim.AdamW([
             {'params': self.inv_renderer.parameters()},
-        ], lr=self.lr, betas=(0.5, 0.999))
+        ], lr=self.lr*1, betas=(0.5, 0.999))
         opt_dis = torch.optim.AdamW([
-            {'params': self.critic_model.parameters()},
-        ], lr=self.lr, betas=(0.5, 0.999))
+            {'params': self.cam_settings.parameters()},
+        ], lr=self.lr*4, betas=(0.5, 0.999))
         sch_gen = torch.optim.lr_scheduler.MultiStepLR(opt_gen, milestones=[100, 200], gamma=0.1)
         sch_dis = torch.optim.lr_scheduler.MultiStepLR(opt_dis, milestones=[100, 200], gamma=0.1)
         return [opt_gen, opt_dis], [sch_gen, sch_dis]
-        # optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
-        # scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
-        # return [optimizer], [scheduler]
 
 if __name__ == "__main__":
     parser = ArgumentParser()
