@@ -263,7 +263,6 @@ class GridNeRVLightningModule(LightningModule):
        
         self.logsdir = hparams.logsdir
        
-        self.st = hparams.st
         self.sh = hparams.sh
         self.pe = hparams.pe
         
@@ -292,7 +291,7 @@ class GridNeRVLightningModule(LightningModule):
             backbone=self.backbone,
         )
 
-        if self.st:
+        if self.stn:
             self.stn_modifier = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
                 out_channels=6, # azim + elev + prob
@@ -325,7 +324,7 @@ class GridNeRVLightningModule(LightningModule):
         self.loss = nn.L1Loss(reduction="mean")
 
     # Spatial transformer network forward function
-    def forward_sptrfm(self, x):
+    def forward_affine(self, x):
         theta = self.stn_modifier(x * 2.0 - 1.0)
         theta = theta.view(-1, 2, 3)
         grid = F.affine_grid(theta, x.size())
@@ -366,7 +365,7 @@ class GridNeRVLightningModule(LightningModule):
         est_figure_ct_locked = self.forward_screen(image3d=image3d, cameras=camera_locked)
         # XR pathway
         if self.stn:
-            src_figure_xr_hidden = self.forward_sptrfm(image2d)
+            src_figure_xr_hidden = self.forward_affine(image2d)
         else:
             src_figure_xr_hidden = image2d
 
