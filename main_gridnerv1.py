@@ -292,7 +292,7 @@ class GridNeRVLightningModule(LightningModule):
             backbone=self.backbone,
         )
 
-        if self.st>0:
+        if self.st:
             self.stn_modifier = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
                 out_channels=6, # azim + elev + prob
