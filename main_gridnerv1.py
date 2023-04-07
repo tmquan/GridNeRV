@@ -379,15 +379,15 @@ class GridNeRVLightningModule(LightningModule):
 
         cam_view = [self.batch_size, 1]       
         est_volume_ct_random, \
-            est_volume_ct_locked, \
-            est_volume_xr_hidden = torch.split(
-                self.forward_volume(
-                    image2d=torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden]),
-                    azim=torch.cat([est_azim_random.view(cam_view), est_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
-                    elev=torch.cat([est_elev_random.view(cam_view), est_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
-                    n_views=2,
-                ), self.batch_size
-            )  
+        est_volume_ct_locked, \
+        est_volume_xr_hidden = torch.split(
+            self.forward_volume(
+                image2d=torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden]),
+                azim=torch.cat([est_azim_random.view(cam_view), est_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
+                elev=torch.cat([est_elev_random.view(cam_view), est_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
+                n_views=2,
+            ), self.batch_size
+        )  
             
         # Reconstruct the appropriate XR
         rec_figure_ct_random = self.forward_screen(image3d=est_volume_ct_random[:,1:], cameras=camera_random)
@@ -525,8 +525,7 @@ class GridNeRVLightningModule(LightningModule):
             return [optimizer], [scheduler]
         elif self.cam:
             # If --cam is set, optimize Unprojector and Camera model using 2 optimizers
-            optimizer = torch.optim.AdamW(list(self.inv_renderer.parameters()) 
-                                        + list(self.cam_settings.parameters()), lr=self.lr, betas=(0.5, 0.999))
+            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
             return [optimizer], [scheduler]
         elif self.gan:
@@ -586,7 +585,7 @@ if __name__ == "__main__":
     # Callback
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}",
-        # filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
+        filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
         monitor="validation_loss_epoch",
         auto_insert_metric_name=True, 
         save_top_k=-1,
@@ -620,7 +619,7 @@ if __name__ == "__main__":
         # gradient_clip_algorithm="value"
         # stochastic_weight_avg=True,
         # deterministic=False,
-        # profiler="simple",
+        profiler="advanced"
     )
 
     # Create data module

@@ -5,7 +5,7 @@ from typing import Callable, Optional, Sequence
 
 from argparse import ArgumentParser
 # from torch.utils.data import Dataset, DataLoader
-from monai.data import Dataset, DataLoader
+from monai.data import CacheDataset, Dataset, DataLoader
 from monai.data import list_data_collate
 from monai.utils import set_determinism
 from monai.transforms import (
@@ -30,7 +30,7 @@ from monai.transforms import (
 
 from pytorch_lightning import LightningDataModule
 
-class UnpairedDataset(Dataset, Randomizable):
+class UnpairedDataset(CacheDataset, Randomizable):
     def __init__(
         self,
         keys: Sequence, 
@@ -188,7 +188,7 @@ class UnpairedDataModule(LightningDataModule):
         self.train_loader = DataLoader(
             self.train_datasets, 
             batch_size=self.batch_size, 
-            num_workers=24, 
+            num_workers=32, 
             collate_fn=list_data_collate,
             shuffle=True,
         )
