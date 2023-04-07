@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import torchvision
 torch.set_float32_matmul_precision('medium')
 torch.cuda.empty_cache()
-torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
+torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 from pytorch3d.renderer.cameras import FoVPerspectiveCameras, look_at_view_transform
@@ -20,7 +20,6 @@ from pytorch3d.renderer import NDCMultinomialRaysampler
 
 from diffusers import UNet2DModel
 from lightning_fabric.utilities.seed import seed_everything
-import lightning
 from lightning import Trainer, LightningModule
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.callbacks import LearningRateMonitor
@@ -251,6 +250,7 @@ class GridNeRVLightningModule(LightningModule):
     def __init__(self, hparams, **kwargs):
         super().__init__()
         self.lr = hparams.lr
+        self.stn = hparams.stn
         self.gan = hparams.gan
         self.cam = hparams.cam
         self.shape = hparams.shape
@@ -292,13 +292,21 @@ class GridNeRVLightningModule(LightningModule):
             backbone=self.backbone,
         )
 
+        if self.st>0:
+            self.stn_modifier = GridNeRVFrontToBackFrustumFeaturer(
+                in_channels=1, 
+                out_channels=6, # azim + elev + prob
+                backbone=self.backbone,
+            )
+            self.stn_modifier.model._fc.weight.data.zero_()
+            self.stn_modifier.model._fc.bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
+            
         if self.cam or self.gan:
             self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
                 out_channels=2, # azim + elev + prob
                 backbone=self.backbone,
             )
-            
             self.cam_settings.model._fc.weight.data.zero_()
             self.cam_settings.model._fc.bias.data.zero_()
 
@@ -308,7 +316,6 @@ class GridNeRVLightningModule(LightningModule):
                 out_channels=2, # azim + elev + prob
                 backbone=self.backbone,
             )
-            
             self.critic_model.model._fc.weight.data.zero_()
             self.critic_model.model._fc.bias.data.zero_()
 
@@ -317,6 +324,14 @@ class GridNeRVLightningModule(LightningModule):
         self.validation_step_outputs = []
         self.loss = nn.L1Loss(reduction="mean")
 
+    # Spatial transformer network forward function
+    def forward_sptrfm(self, x):
+        theta = self.stn_modifier(x * 2.0 - 1.0)
+        theta = theta.view(-1, 2, 3)
+        grid = F.affine_grid(theta, x.size())
+        xs = F.grid_sample(x, grid)
+        return xs
+    
     def forward_screen(self, image3d, cameras):   
         return self.fwd_renderer(image3d, cameras) 
 
@@ -349,7 +364,11 @@ class GridNeRVLightningModule(LightningModule):
 
         est_figure_ct_random = self.forward_screen(image3d=image3d, cameras=camera_random)
         est_figure_ct_locked = self.forward_screen(image3d=image3d, cameras=camera_locked)
-        src_figure_xr_hidden = image2d
+        # XR pathway
+        if self.stn:
+            src_figure_xr_hidden = self.forward_sptrfm(image2d)
+        else:
+            src_figure_xr_hidden = image2d
 
         est_dist_random = 4.0 * torch.ones(self.batch_size, device=_device)
         est_dist_locked = 4.0 * torch.ones(self.batch_size, device=_device)
@@ -520,12 +539,12 @@ class GridNeRVLightningModule(LightningModule):
     def configure_optimizers(self):
         if not self.cam and not self.gan:
             # If neither --cam nor --gan are set, use one optimizer to optimize Unprojector model
-            optimizer = torch.optim.AdamW(self.inv_renderer.parameters(), lr=self.lr, betas=(0.5, 0.999))
+            optimizer = torch.optim.AdamW(self.trainer.model.parameters(), lr=self.lr, betas=(0.5, 0.999))
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
             return [optimizer], [scheduler]
         elif self.cam:
             # If --cam is set, optimize Unprojector and Camera model using 2 optimizers
-            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
+            optimizer = torch.optim.AdamW(self.trainer.model.parameters(), lr=self.lr, betas=(0.5, 0.999))
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
             return [optimizer], [scheduler]
         elif self.gan:
@@ -556,6 +575,7 @@ if __name__ == "__main__":
     parser.add_argument("--sh", type=int, default=0, help="degree of spherical harmonic (2, 3)")
     parser.add_argument("--pe", type=int, default=0, help="positional encoding (0 - 8)")
     
+    parser.add_argument("--stn", action="store_true", help="whether to train with spatial transformer")
     parser.add_argument("--gan", action="store_true", help="whether to train with GAN")
     parser.add_argument("--cam", action="store_true", help="train cam locked or hidden")
     parser.add_argument("--amp", action="store_true", help="train with mixed precision or not")
@@ -567,9 +587,9 @@ if __name__ == "__main__":
     parser.add_argument("--lambda_gp", type=float, default=10, help="gradient penalty")
     parser.add_argument("--clamp_val", type=float, default=.1, help="gradient discrim clamp value")
     
-    parser.add_argument("--lr", type=float, default=2e-4, help="adam: learning rate")
+    parser.add_argument("--lr", type=float, default=1e-4, help="adam: learning rate")
     parser.add_argument("--ckpt", type=str, default=None, help="path to checkpoint")
-    parser.add_argument("--logsdir", type=str, default='logsfrecaling', help="logging directory")
+    parser.add_argument("--logsdir", type=str, default='logs', help="logging directory")
     parser.add_argument("--datadir", type=str, default='data', help="data directory")
     parser.add_argument("--backbone", type=str, default='efficientnet-b7', help="Backbone for network")
     parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
@@ -584,7 +604,7 @@ if __name__ == "__main__":
 
     # Callback
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}",
+        dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_stn{int(hparams.stn)}",
         filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
         monitor="validation_loss_epoch",
         auto_insert_metric_name=True, 
@@ -596,7 +616,7 @@ if __name__ == "__main__":
 
     # Logger
     tensorboard_logger = TensorBoardLogger(
-        save_dir=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}", 
+        save_dir=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_stn{int(hparams.stn)}", 
         log_graph=True
     )
     swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
@@ -613,7 +633,6 @@ if __name__ == "__main__":
         ],
         accumulate_grad_batches=4 if not hparams.cam and not hparams.gan else 1,
         strategy="auto", 
-        # plugins=DDPStrategy(find_unused_parameters=False),
         precision=16 if hparams.amp else 32,
         # gradient_clip_val=0.01, 
         # gradient_clip_algorithm="value"
