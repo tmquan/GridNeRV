@@ -134,6 +134,7 @@ class GridNeRVLightningModule(LightningModule):
             tqdm_trigger_threshold=1000,
             raysampler_class_type="AdaptiveRaySampler",
             raysampler_AdaptiveRaySampler_args = {"scene_extent": 4.0},
+            view_pooler_enabled=True,
             # renderer_class_type="PixelNeRFFrontToBackRenderer",
             # renderer_args={},
             renderer_class_type="MultiPassEmissionAbsorptionRenderer",
@@ -191,8 +192,9 @@ class GridNeRVLightningModule(LightningModule):
         out_cmpt_random = self.inv_renderer.forward(
             image_rgb=est_cmpt_random.repeat(1, 3, 1, 1),
             camera=cam_view_random,  # type: ignore
-            evaluation_mode=EvaluationMode.TRAINING if stage == "train" else EvaluationMode.EVALUATION
-            # evaluation_mode=EvaluationMode.EVALUATION
+            evaluation_mode=EvaluationMode.TRAINING if stage == "train" else EvaluationMode.EVALUATION,
+            # evaluation_mode=EvaluationMode.EVALUATION, 
+            sequence_name=["111"],
         )
         # print(out_cmpt_random)
         
