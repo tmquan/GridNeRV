@@ -604,7 +604,7 @@ if __name__ == "__main__":
     # Callback
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_stn{int(hparams.stn)}",
-        filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
+        # filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
         monitor="validation_loss_epoch",
         auto_insert_metric_name=True, 
         save_top_k=-1,
