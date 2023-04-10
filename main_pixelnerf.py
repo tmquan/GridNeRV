@@ -20,6 +20,15 @@ from pytorch3d.renderer.camera_utils import join_cameras_as_batch
 from pytorch3d.renderer.implicit.utils import ray_bundle_to_ray_points
 from pytorch3d.renderer import NDCMultinomialRaysampler
 
+from pytorch3d.implicitron.models.renderer.base import (
+    BaseRenderer,
+    EvaluationMode,
+    ImplicitFunctionWrapper,
+    ImplicitronRayBundle,
+    RendererOutput,
+    RenderSamplingMode,
+)
+
 from diffusers import UNet2DModel
 from lightning_fabric.utilities.seed import seed_everything
 from lightning import Trainer, LightningModule
@@ -64,19 +73,22 @@ def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor):
 
 CONSTRUCT_MODEL_FROM_CONFIG = True
 
-class PixelNeRFFrontToBackInverseRenderer(GenericModel):
-    renderer_class_type="PixelNeRFFrontToBackRenderer",
-    # implicit_function_class_type="NeuralRadianceFieldImplicitFunction",
-    # render_image_height=256,
-    # render_image_width=256,
-    # loss_weights={"loss_rgb_huber": 0.0, "loss_rgb_mse": 1.0},
-    # tqdm_trigger_threshold=1000,
-    # raysampler_class_type="AdaptiveRaySampler",
-    # raysampler_AdaptiveRaySampler_args = {"scene_extent": 4.0},
-    # image_feature_extractor_class_type="ResNetFeatureExtractor",
-    # image_feature_extractor_ResNetFeatureExtractor_args = {"name": "resnet101", "add_masks": False},
-    # chunk_size_grid=4096,
-    # render_features_dimensions=3
+# class PixelNeRFFrontToBackInverseRenderer(GenericModel):
+#     # renderer_class_type="PixelNeRFFrontToBackRenderer"
+#     # ---- renderer configs
+#     renderer_class_type: str = "PixelNeRFFrontToBackRenderer"
+#     renderer: BaseRenderer
+#     # implicit_function_class_type="NeuralRadianceFieldImplicitFunction",
+#     # render_image_height=256,
+#     # render_image_width=256,
+#     # loss_weights={"loss_rgb_huber": 0.0, "loss_rgb_mse": 1.0},
+#     # tqdm_trigger_threshold=1000,
+#     # raysampler_class_type="AdaptiveRaySampler",
+#     # raysampler_AdaptiveRaySampler_args = {"scene_extent": 4.0},
+#     # image_feature_extractor_class_type="ResNetFeatureExtractor",
+#     # image_feature_extractor_ResNetFeatureExtractor_args = {"name": "resnet101", "add_masks": False},
+#     # chunk_size_grid=4096,
+#     # render_features_dimensions=3
         
 class GridNeRVLightningModule(LightningModule):
     def __init__(self, hparams, **kwargs):
@@ -114,19 +126,30 @@ class GridNeRVLightningModule(LightningModule):
             max_depth=6.0, 
         )
         
-        self.inv_renderer = PixelNeRFFrontToBackInverseRenderer(
-                implicit_function_class_type="NeuralRadianceFieldImplicitFunction",
-                render_image_height=self.shape,
-                render_image_width=self.shape,
-                loss_weights={"loss_rgb_huber": 0.0, "loss_rgb_mse": 1.0},
-                tqdm_trigger_threshold=1000,
-                raysampler_class_type="AdaptiveRaySampler",
-                raysampler_AdaptiveRaySampler_args = {"scene_extent": 4.0},
-                image_feature_extractor_class_type="ResNetFeatureExtractor",
-                image_feature_extractor_ResNetFeatureExtractor_args = {"name": "resnet101", "add_masks": False},
-                chunk_size_grid=4096,
-                render_features_dimensions=3
-        )        
+        self.inv_renderer = GenericModel(
+            implicit_function_class_type="NeuralRadianceFieldImplicitFunction",
+            render_image_height=self.shape,
+            render_image_width=self.shape,
+            loss_weights={"loss_rgb_huber": 0.0, "loss_rgb_mse": 1.0},
+            tqdm_trigger_threshold=1000,
+            raysampler_class_type="AdaptiveRaySampler",
+            raysampler_AdaptiveRaySampler_args = {"scene_extent": 4.0},
+            # renderer_class_type="PixelNeRFFrontToBackRenderer",
+            # renderer_args={},
+            renderer_class_type="MultiPassEmissionAbsorptionRenderer",
+            renderer_MultiPassEmissionAbsorptionRenderer_args={
+                "raymarcher_class_type": "MultiPassEmissionAbsorptionFrontToBackRaymarcher",
+            },
+            image_feature_extractor_class_type="ResNetFeatureExtractor",
+            image_feature_extractor_ResNetFeatureExtractor_args = {"name": "resnet101", "add_masks": False},
+            chunk_size_grid=4096,
+            render_features_dimensions=3
+        )    
+        # In this case we can get the equivalent DictConfig cfg object to the way gm is configured as follows
+        from omegaconf import OmegaConf
+        from pprint import pprint
+        cfg = OmegaConf.structured(self.inv_renderer)    
+        pprint(cfg)
         # self.inv_renderer = GenericModel(
         #     # # renderer_class=PixelNeRFFrontToBackRenderer,
         #     # # renderer_class_type="PixelNeRFFrontToBackRenderer",

@@ -40,17 +40,3 @@ class PixelNeRFFrontToBackRenderer(MultiPassEmissionAbsorptionRenderer, Configur
     density_noise_std_train: float = 0.0
     return_weights: bool = False
 
-    def __post_init__(self):
-        self._refiners = {
-            EvaluationMode.TRAINING: RayPointRefiner(
-                n_pts_per_ray=self.n_pts_per_ray_fine_training,
-                random_sampling=self.stratified_sampling_coarse_training,
-                add_input_samples=self.append_coarse_samples_to_fine,
-            ),
-            EvaluationMode.EVALUATION: RayPointRefiner(
-                n_pts_per_ray=self.n_pts_per_ray_fine_evaluation,
-                random_sampling=self.stratified_sampling_coarse_evaluation,
-                add_input_samples=self.append_coarse_samples_to_fine,
-            ),
-        }
-        run_auto_creation(self)
