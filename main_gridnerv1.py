@@ -57,30 +57,49 @@ def interpolate_volume(cameras, ray_sampler, ray_values, volume_shape, n_pts_per
     B, C, S, X, Y = ray_values.shape
     D, H, W = volume_shape
     assert S == n_pts_per_ray
-    # Obtain the ray_points (positions) sampled by the ray_samplers
-    ray_bundle = ray_sampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
-    ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3)
     
-    # Get the transform of the ray_points
-    transform = cameras.get_ndc_camera_transform()
+    # - `get_camera_center` that returns the optical center of the camera in
+    #     world coordinates
+    # - `get_world_to_view_transform` which returns a 3D transform from
+    #     world coordinates to the camera view coordinates (R, T)
+    # - `get_full_projection_transform` which composes the projection
+    #     transform (P) with the world-to-view transform (R, T)
+    # - `get_ndc_camera_transform` which defines the transform from screen/NDC to
+    #     PyTorch3D's NDC space
+    # - `transform_points` which takes a set of input points in world coordinates and
+    #     projects to the space the camera is defined in (NDC or screen)
+    # - `transform_points_ndc` which takes a set of points in world coordinates and
+    #     projects them to PyTorch3D's NDC space
+    # - `transform_points_screen` which takes a set of points in world coordinates and
+    #     projects them to screen space
+            
+    # # Obtain the ray_points (positions) sampled by the ray_samplers
+    # ray_bundle = ray_sampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
+    # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3)
+    # ndc_points = cameras.get_ndc_camera_transform().inverse().transform_points(ray_points)
     
     # Generate a grid of ndc coordinates that covers the entire ndc volume
-    ndc_z = torch.linspace(-1, 1, steps=D, device=ray_points.device)
+    ndc_z = torch.linspace(-1, 1, steps=D, device=_device)
     ndc_y = torch.linspace(-1, 1, steps=H, device=_device)
     ndc_x = torch.linspace(-1, 1, steps=W, device=_device)
-    ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)
+    ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
+    # cam_coords = cameras.get_ndc_camera_transform().inverse().transform_points(ndc_coords)
+    cam_coords = cameras.get_world_to_view_transform().inverse().transform_points( # view to world
+                    cameras.transform_points( # world to ndc 
+                        ndc_coords
+                    )
+                )
     
-    # Transform the ndc coordinates to the camera space
-    cam_coords = transform.inverse().transform_points(ndc_coords)
-    
-    # Reshape the transformed coordinates to match the ray_points shape
-    cam_coords = cam_coords.view(B, D, H, W, 3)
-    
-    # Sample the values at the transformed coordinates using trilinear interpolation
-    interpolated_values = F.grid_sample(ray_values, cam_coords, align_corners=False)
-    
+    ndc_values = F.grid_sample(
+        ray_values,
+        cam_coords.view(-1, D, H, W, 3),
+        mode='bilinear', 
+        padding_mode='zeros', 
+        align_corners=True
+    )
+
     # Reshape the interpolated values to the ndc volume shape
-    ndc_volume = interpolated_values.view(B, 1, D, H, W)
+    ndc_volume = ndc_values.view(B, 1, D, H, W)
     
     return ndc_volume
 
@@ -95,7 +114,7 @@ class GridNeRVFrontToBackFrustumFeaturer(nn.Module):
             spatial_dims=2,
             in_channels=in_channels,
             num_classes=out_channels,
-            adv_prop=True,
+            # adv_prop=True,
         )
 
     def forward(self, figures):
@@ -175,7 +194,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ),
         )
 
@@ -191,7 +210,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ),
         )
 
@@ -207,7 +226,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ), 
         )
 
