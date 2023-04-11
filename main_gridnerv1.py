@@ -244,7 +244,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             # shcomps = shcoeff*self.shbasis.repeat(clarity.shape[0], 1, 1, 1, 1) 
             sh_comps_raw = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
             # Take the absolute value of the spherical harmonic components
-            sh_comps_abs = torch.abs(sh_comps_raw)
+            # sh_comps_abs = torch.abs(sh_comps_raw)
+            sh_comps_abs = sh_comps_raw
             sh_comps_max = sh_comps_abs.max()
             sh_comps_min = sh_comps_abs.min()
             # Normalize the spherical harmonic components
@@ -563,9 +564,10 @@ class GridNeRVLightningModule(LightningModule):
             optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
             return [optimizer], [scheduler]
-        elif self.cam:
+        elif self.cam and not self.gan:
             # If --cam is set, optimize Unprojector and Camera model using 2 optimizers
-            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
+            optimizer = torch.optim.AdamW(list(self.inv_renderer.parameters()) 
+                                        + list(self.cam_settings.parameters()), lr=self.lr, betas=(0.5, 0.999))
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
             return [optimizer], [scheduler]
         elif self.gan:
