@@ -14,7 +14,9 @@ torch.cuda.empty_cache()
 torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+import pytorch3d
 from pytorch3d.renderer.cameras import FoVPerspectiveCameras, look_at_view_transform
+from pytorch3d.transforms import Transform3d
 from pytorch3d.renderer.implicit.utils import ray_bundle_to_ray_points
 from pytorch3d.renderer import NDCMultinomialRaysampler
 
@@ -46,6 +48,42 @@ backbones = {
     "efficientnet-b8": (32, 56, 88, 248, 704),
     "efficientnet-l2": (72, 104, 176, 480, 1376),
 }
+    
+def interpolate_volume(cameras, ray_sampler, ray_values, volume_shape, n_pts_per_ray=200):
+    # Get the device
+    _device = ray_values.device
+    
+    # Get the shapes of input tensors
+    B, C, S, X, Y = ray_values.shape
+    D, H, W = volume_shape
+    assert S == n_pts_per_ray
+    # Obtain the ray_points (positions) sampled by the ray_samplers
+    ray_bundle = ray_sampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
+    ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3)
+    
+    # Get the transform of the ray_points
+    transform = cameras.get_ndc_camera_transform()
+    
+    # Generate a grid of ndc coordinates that covers the entire ndc volume
+    ndc_z = torch.linspace(-1, 1, steps=D, device=ray_points.device)
+    ndc_y = torch.linspace(-1, 1, steps=H, device=_device)
+    ndc_x = torch.linspace(-1, 1, steps=W, device=_device)
+    ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)
+    
+    # Transform the ndc coordinates to the camera space
+    cam_coords = transform.inverse().transform_points(ndc_coords)
+    
+    # Reshape the transformed coordinates to match the ray_points shape
+    cam_coords = cam_coords.view(B, D, H, W, 3)
+    
+    # Sample the values at the transformed coordinates using trilinear interpolation
+    interpolated_values = F.grid_sample(ray_values, cam_coords, align_corners=False)
+    
+    # Reshape the interpolated values to the ndc volume shape
+    ndc_volume = interpolated_values.view(B, 1, D, H, W)
+    
+    return ndc_volume
+
 
 class GridNeRVFrontToBackFrustumFeaturer(nn.Module):
     def __init__(self, in_channels=1, out_channels=1, backbone="efficientnet-b7"):
@@ -180,30 +218,31 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             min_depth=2.0,
             max_depth=6.0,
         )        
-
-        
-    def forward(self, figures, azim, elev, n_views=2, n_pts_per_ray=256):
-        clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.shape, self.shape, self.shape)
+    
+    def forward(self, figures, azim, elev, n_views=2):
+        clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.n_pts_per_ray, self.shape, self.shape)
         
         # Process (resample) the clarity from ray views to ndc
         _device = figures.device
         batchsz = figures.shape[0]
         dist = 4.0 * torch.ones(batchsz, device=_device)
         cameras = make_cameras(dist, elev, azim)
-        ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
-        ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
+        # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
+        # ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
         
-        # Generate camera intrinsics and extrinsics
-        itransform = cameras.get_ndc_camera_transform().inverse()
-        ndc_points = itransform.transform_points(ray_points)
-        ndc_values = F.grid_sample(
-            clarity,
-            ndc_points.view(-1, self.shape, self.shape, self.shape, 3),
-            mode='bilinear', 
-            padding_mode='zeros', 
-            align_corners=True
-        )
-        
+        # # Generate camera intrinsics and extrinsics
+        # itransform = cameras.get_ndc_camera_transform().inverse()
+        # ndc_points = itransform.transform_points(ray_points)
+        # ndc_values = F.grid_sample(
+        #     clarity,
+        #     ndc_points.view(-1, self.shape, self.shape, self.shape, 3),
+        #     mode='bilinear', 
+        #     padding_mode='zeros', 
+        #     align_corners=True
+        # )
+        ray_values = clarity
+        volume_shape = [self.shape, self.shape, self.shape]
+        ndc_values = interpolate_volume(cameras, self.raysampler, ray_values, volume_shape, self.n_pts_per_ray)
         # Multiview can stack along batch dimension, last dimension is for X-ray
         clarity_ct, clarity_xr = torch.split(ndc_values, n_views)
         clarity_ct = clarity_ct.mean(dim=0, keepdim=True)
@@ -288,6 +327,7 @@ class GridNeRVLightningModule(LightningModule):
             shape=self.shape, 
             sh=self.sh, 
             pe=self.pe,
+            n_pts_per_ray=self.n_pts_per_ray, 
             backbone=self.backbone,
         )
 
