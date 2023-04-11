@@ -241,15 +241,15 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             shcoeff = self.refiner_net(torch.cat([clarity, density, mixture], dim=1))
 
         if self.sh > 0:
-            # shcomps = shcoeff*self.shbasis.repeat(clarity.shape[0], 1, 1, 1, 1) 
-            shcomps = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
+            shcomps = shcoeff*self.shbasis.repeat(clarity.shape[0], 1, 1, 1, 1) 
+            # # shcomps = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
             # sh_comps_raw = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
             # # Take the absolute value of the spherical harmonic components
-            # sh_comps_abs = torch.abs(sh_comps_raw)
-            # sh_comps_max = sh_comps_abs.max()
-            # sh_comps_min = sh_comps_abs.min()
+            # # sh_comps_abs = torch.abs(sh_comps_raw)
+            # sh_comps_max = sh_comps_raw.max()
+            # sh_comps_min = sh_comps_raw.min()
             # # Normalize the spherical harmonic components
-            # shcomps = (sh_comps_abs - sh_comps_min) / (sh_comps_max - sh_comps_min + 1e-8)
+            # shcomps = (sh_comps_raw - sh_comps_min) / (sh_comps_max - sh_comps_min + 1e-8)
         else:
             shcomps = shcoeff 
 
