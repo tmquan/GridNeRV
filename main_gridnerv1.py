@@ -14,9 +14,7 @@ torch.cuda.empty_cache()
 torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 torch.multiprocessing.set_sharing_strategy('file_system')
 
-import pytorch3d
 from pytorch3d.renderer.cameras import FoVPerspectiveCameras, look_at_view_transform
-from pytorch3d.transforms import Transform3d
 from pytorch3d.renderer.implicit.utils import ray_bundle_to_ray_points
 from pytorch3d.renderer import NDCMultinomialRaysampler
 
@@ -48,61 +46,6 @@ backbones = {
     "efficientnet-b8": (32, 56, 88, 248, 704),
     "efficientnet-l2": (72, 104, 176, 480, 1376),
 }
-    
-def interpolate_volume(cameras, ray_sampler, ray_values, volume_shape, n_pts_per_ray=200):
-    # Get the device
-    _device = ray_values.device
-    
-    # Get the shapes of input tensors
-    B, C, S, X, Y = ray_values.shape
-    D, H, W = volume_shape
-    assert S == n_pts_per_ray
-    
-    # - `get_camera_center` that returns the optical center of the camera in
-    #     world coordinates
-    # - `get_world_to_view_transform` which returns a 3D transform from
-    #     world coordinates to the camera view coordinates (R, T)
-    # - `get_full_projection_transform` which composes the projection
-    #     transform (P) with the world-to-view transform (R, T)
-    # - `get_ndc_camera_transform` which defines the transform from screen/NDC to
-    #     PyTorch3D's NDC space
-    # - `transform_points` which takes a set of input points in world coordinates and
-    #     projects to the space the camera is defined in (NDC or screen)
-    # - `transform_points_ndc` which takes a set of points in world coordinates and
-    #     projects them to PyTorch3D's NDC space
-    # - `transform_points_screen` which takes a set of points in world coordinates and
-    #     projects them to screen space
-            
-    # # Obtain the ray_points (positions) sampled by the ray_samplers
-    # ray_bundle = ray_sampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
-    # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3)
-    # ndc_points = cameras.get_ndc_camera_transform().inverse().transform_points(ray_points)
-    
-    # Generate a grid of ndc coordinates that covers the entire ndc volume
-    ndc_z = torch.linspace(-1, 1, steps=D, device=_device)
-    ndc_y = torch.linspace(-1, 1, steps=H, device=_device)
-    ndc_x = torch.linspace(-1, 1, steps=W, device=_device)
-    ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
-    # cam_coords = cameras.get_ndc_camera_transform().inverse().transform_points(ndc_coords)
-    cam_coords =    cameras.transform_points( # world to ndc 
-                        cameras.get_world_to_view_transform().inverse().transform_points( # view to world
-                           ndc_coords
-                        )
-                    )
-    
-    ndc_values = F.grid_sample(
-        ray_values,
-        cam_coords.view(-1, D, H, W, 3),
-        mode='bilinear', 
-        padding_mode='zeros', 
-        align_corners=True
-    )
-
-    # Reshape the interpolated values to the ndc volume shape
-    ndc_volume = ndc_values.view(B, 1, D, H, W)
-    
-    return ndc_volume
-
 
 class GridNeRVFrontToBackFrustumFeaturer(nn.Module):
     def __init__(self, in_channels=1, out_channels=1, backbone="efficientnet-b7"):
@@ -114,7 +57,7 @@ class GridNeRVFrontToBackFrustumFeaturer(nn.Module):
             spatial_dims=2,
             in_channels=in_channels,
             num_classes=out_channels,
-            # adv_prop=True,
+            adv_prop=True,
         )
 
     def forward(self, figures):
@@ -163,7 +106,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             in_channels=1,  
             out_channels=self.n_pts_per_ray,
             layers_per_block=2,  # how many ResNet layers to use per UNet block
-            block_out_channels=(32, 48, 80, 224, 640), #(32, 48, 80, 224, 640),  # More channels -> more parameters
+            block_out_channels=backbones[backbone],  # More channels -> more parameters
             norm_num_groups=8,
             down_block_types=(
                 "DownBlock2D",  
@@ -187,14 +130,14 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 spatial_dims=3,
                 in_channels=1+pe_channels,
                 out_channels=1,
-                channels=(32, 48, 80, 224, 640), #(32, 48, 80, 224, 640),
+                channels=backbones[backbone],
                 strides=(2, 2, 2, 2, 2),
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ),
         )
 
@@ -203,14 +146,14 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 spatial_dims=3,
                 in_channels=2+pe_channels,
                 out_channels=1,
-                channels=(32, 48, 80, 224, 640), #(32, 48, 80, 224, 640),
+                channels=backbones[backbone],
                 strides=(2, 2, 2, 2, 2),
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ),
         )
 
@@ -219,14 +162,14 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 spatial_dims=3,
                 in_channels=3+pe_channels,
                 out_channels=out_channels,
-                channels=(32, 48, 80, 224, 640), #(32, 48, 80, 224, 640),
+                channels=backbones[backbone],
                 strides=(2, 2, 2, 2, 2),
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ), 
         )
 
@@ -237,17 +180,18 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             min_depth=2.0,
             max_depth=6.0,
         )        
-    
-    def forward(self, figures, azim, elev, n_views=2):
-        clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.n_pts_per_ray, self.shape, self.shape)
+
+        
+    def forward(self, figures, azim, elev, n_views=2, n_pts_per_ray=256):
+        clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.shape, self.shape, self.shape)
         
         # Process (resample) the clarity from ray views to ndc
         _device = figures.device
-        batchsz = figures.shape[0]
-        dist = 4.0 * torch.ones(batchsz, device=_device)
+        B = figures.shape[0]
+        dist = 4.0 * torch.ones(B, device=_device)
         cameras = make_cameras(dist, elev, azim)
         # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
-        # ray_points = ray_bundle_to_ray_points(ray_bundle).view(batchsz, -1, 3) 
+        # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
         
         # # Generate camera intrinsics and extrinsics
         # itransform = cameras.get_ndc_camera_transform().inverse()
@@ -259,9 +203,29 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         #     padding_mode='zeros', 
         #     align_corners=True
         # )
+        
+        # Generate a grid of ndc coordinates that covers the entire ndc volume
+        ndc_z = torch.linspace(-1, 1, steps=self.shape, device=_device)
+        ndc_y = torch.linspace(-1, 1, steps=self.shape, device=_device)
+        ndc_x = torch.linspace(-1, 1, steps=self.shape, device=_device)
+        ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
+        v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ndc_coords)
+        w2c_coords = cameras.transform_points(v2w_coords)
+        # cam_coords = cameras.get_ndc_camera_transform().inverse().transform_points(ndc_coords)
+        # cam_coords =    cameras.transform_points( # world to ndc 
+        #                     cameras.get_world_to_view_transform().inverse().transform_points( # view to world
+        #                     ndc_coords
+        #                     )
+        #                 )
         ray_values = clarity
-        volume_shape = [self.shape, self.shape, self.shape]
-        ndc_values = interpolate_volume(cameras, self.raysampler, ray_values, volume_shape, self.n_pts_per_ray)
+        ndc_values = F.grid_sample(
+            ray_values,
+            w2c_coords.view(-1, self.shape, self.shape, self.shape, 3),
+            mode='bilinear', 
+            padding_mode='zeros', 
+            align_corners=True
+        )
+        
         # Multiview can stack along batch dimension, last dimension is for X-ray
         clarity_ct, clarity_xr = torch.split(ndc_values, n_views)
         clarity_ct = clarity_ct.mean(dim=0, keepdim=True)
@@ -278,16 +242,14 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
 
         if self.sh > 0:
             # shcomps = shcoeff*self.shbasis.repeat(clarity.shape[0], 1, 1, 1, 1) 
-            sh_comps_raw = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
-            if True:
-                shcomps = sh_comps_raw
-            else:
-                # Take the absolute value of the spherical harmonic components
-                sh_comps_abs = torch.abs(sh_comps_raw)
-                sh_comps_max = sh_comps_abs.max()
-                sh_comps_min = sh_comps_abs.min()
-                # Normalize the spherical harmonic components
-                shcomps = (sh_comps_abs - sh_comps_min) / (sh_comps_max - sh_comps_min + 1e-8)
+            shcomps = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
+            # sh_comps_raw = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
+            # # Take the absolute value of the spherical harmonic components
+            # sh_comps_abs = torch.abs(sh_comps_raw)
+            # sh_comps_max = sh_comps_abs.max()
+            # sh_comps_min = sh_comps_abs.min()
+            # # Normalize the spherical harmonic components
+            # shcomps = (sh_comps_abs - sh_comps_min) / (sh_comps_max - sh_comps_min + 1e-8)
         else:
             shcomps = shcoeff 
 
@@ -349,7 +311,6 @@ class GridNeRVLightningModule(LightningModule):
             shape=self.shape, 
             sh=self.sh, 
             pe=self.pe,
-            n_pts_per_ray=self.n_pts_per_ray, 
             backbone=self.backbone,
         )
 
@@ -628,7 +589,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_pts_per_ray", type=int, default=512, help="Sampling points per ray")
     parser.add_argument("--batch_size", type=int, default=1, help="size of the batches")
     parser.add_argument("--shape", type=int, default=256, help="spatial size of the tensor")
-    parser.add_argument("--epochs", type=int, default=201, help="number of epochs")
+    parser.add_argument("--epochs", type=int, default=301, help="number of epochs")
     parser.add_argument("--train_samples", type=int, default=1000, help="training samples")
     parser.add_argument("--val_samples", type=int, default=400, help="validation samples")
     parser.add_argument("--test_samples", type=int, default=400, help="test samples")
@@ -665,8 +626,8 @@ if __name__ == "__main__":
 
     # Callback
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{hparams.logsdir}_sh{hparams.sh}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_stn{int(hparams.stn)}_shape{int(hparams.shape)}",
-        # filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
+        dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_stn{int(hparams.stn)}",
+        filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
         monitor="validation_loss_epoch",
         auto_insert_metric_name=True, 
         save_top_k=-1,
@@ -677,7 +638,7 @@ if __name__ == "__main__":
 
     # Logger
     tensorboard_logger = TensorBoardLogger(
-        save_dir=f"{hparams.logsdir}_sh{hparams.sh}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_stn{int(hparams.stn)}_shape{int(hparams.shape)}", 
+        save_dir=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_stn{int(hparams.stn)}", 
         log_graph=True
     )
     swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
@@ -692,7 +653,7 @@ if __name__ == "__main__":
             checkpoint_callback,
             # swa_callback
         ],
-        accumulate_grad_batches=4 if not hparams.cam and not hparams.gan else 1,
+        accumulate_grad_batches=4 if not hparams.gan else 1,
         strategy="auto", 
         precision=16 if hparams.amp else 32,
         # gradient_clip_val=0.01, 
