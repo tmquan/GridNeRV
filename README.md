@@ -4,15 +4,21 @@ VoxelNeRV
 ```bash
 conda create -n py310 python=3.10
 conda activate py310
-pip install monai[all]
-pip install diffusers
-pip install pytorch-lightning
+pip install -U monai[all]
+pip install -U diffusers
+pip install -U lightning
+pip install -U transformers
 pip install git+https://github.com/tatp22/multidim-positional-encoding 
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu113
 # conda install pytorch3d -c pytorch3d
 # conda install pytorch-lightning
 # conda install monai
 python setup.py
+```
+
+```
+docker run -it nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 bash
 ```
 
 ```bash
