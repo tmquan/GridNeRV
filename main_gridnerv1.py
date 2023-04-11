@@ -182,8 +182,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         )        
 
         
-    def forward(self, figures, azim, elev, n_views=2, n_pts_per_ray=256):
-        clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.shape, self.shape, self.shape)
+    def forward(self, figures, azim, elev, n_views=2):
+        clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.n_pts_per_ray, self.shape, self.shape)
         
         # Process (resample) the clarity from ray views to ndc
         _device = figures.device
@@ -241,15 +241,14 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             shcoeff = self.refiner_net(torch.cat([clarity, density, mixture], dim=1))
 
         if self.sh > 0:
-            shcomps = shcoeff*self.shbasis.repeat(clarity.shape[0], 1, 1, 1, 1) 
-            # # shcomps = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
-            # sh_comps_raw = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
-            # # Take the absolute value of the spherical harmonic components
-            # # sh_comps_abs = torch.abs(sh_comps_raw)
-            # sh_comps_max = sh_comps_raw.max()
-            # sh_comps_min = sh_comps_raw.min()
-            # # Normalize the spherical harmonic components
-            # shcomps = (sh_comps_raw - sh_comps_min) / (sh_comps_max - sh_comps_min + 1e-8)
+            # shcomps = shcoeff*self.shbasis.repeat(clarity.shape[0], 1, 1, 1, 1) 
+            sh_comps_raw = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
+            # Take the absolute value of the spherical harmonic components
+            sh_comps_abs = torch.abs(sh_comps_raw)
+            sh_comps_max = sh_comps_abs.max()
+            sh_comps_min = sh_comps_abs.min()
+            # Normalize the spherical harmonic components
+            shcomps = (sh_comps_abs - sh_comps_min) / (sh_comps_max - sh_comps_min + 1e-8)
         else:
             shcomps = shcoeff 
 
@@ -561,12 +560,12 @@ class GridNeRVLightningModule(LightningModule):
     def configure_optimizers(self):
         if not self.cam and not self.gan:
             # If neither --cam nor --gan are set, use one optimizer to optimize Unprojector model
-            optimizer = torch.optim.AdamW(self.trainer.model.parameters(), lr=self.lr, betas=(0.5, 0.999))
+            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
             return [optimizer], [scheduler]
         elif self.cam:
             # If --cam is set, optimize Unprojector and Camera model using 2 optimizers
-            optimizer = torch.optim.AdamW(self.trainer.model.parameters(), lr=self.lr, betas=(0.5, 0.999))
+            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
             return [optimizer], [scheduler]
         elif self.gan:
@@ -653,7 +652,7 @@ if __name__ == "__main__":
             checkpoint_callback,
             # swa_callback
         ],
-        accumulate_grad_batches=4 if not hparams.gan else 1,
+        accumulate_grad_batches=4 if not hparams.cam and not hparams.gan else 1,
         strategy="auto", 
         precision=16 if hparams.amp else 32,
         # gradient_clip_val=0.01, 
