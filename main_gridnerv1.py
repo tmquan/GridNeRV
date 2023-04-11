@@ -32,7 +32,7 @@ from monai.networks.layers.factories import Norm
 
 from positional_encodings.torch_encodings import PositionalEncodingPermute3D
 from datamodule import UnpairedDataModule
-from dvr.renderer import DirectVolumeFrontToBackRenderer
+from dvr.renderer import DirectVolumeFrontToBackRenderer, normalized, standardized
 
 backbones = {
     "efficientnet-b0": (16, 24, 40, 112, 320),
@@ -242,14 +242,15 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
 
         if self.sh > 0:
             # shcomps = shcoeff*self.shbasis.repeat(clarity.shape[0], 1, 1, 1, 1) 
-            sh_comps_raw = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
+            shcomps_raw = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
+            shcomps = normalized(standardized(shcomps_raw))
             # Take the absolute value of the spherical harmonic components
-            # sh_comps_abs = torch.abs(sh_comps_raw)
-            sh_comps_abs = sh_comps_raw
-            sh_comps_max = sh_comps_abs.max()
-            sh_comps_min = sh_comps_abs.min()
-            # Normalize the spherical harmonic components
-            shcomps = (sh_comps_abs - sh_comps_min) / (sh_comps_max - sh_comps_min + 1e-8)
+            # shcomps_abs = torch.abs(shcomps_raw)
+            # shcomps_abs = shcomps_raw
+            # shcomps_max = shcomps_abs.max()
+            # shcomps_min = shcomps_abs.min()
+            # # Normalize the spherical harmonic components
+            # shcomps = (shcomps_abs - shcomps_min) / (shcomps_max - shcomps_min + 1e-8)
         else:
             shcomps = shcoeff 
 
