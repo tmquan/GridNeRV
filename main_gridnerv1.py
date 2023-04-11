@@ -84,11 +84,11 @@ def interpolate_volume(cameras, ray_sampler, ray_values, volume_shape, n_pts_per
     ndc_x = torch.linspace(-1, 1, steps=W, device=_device)
     ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
     # cam_coords = cameras.get_ndc_camera_transform().inverse().transform_points(ndc_coords)
-    cam_coords = cameras.get_world_to_view_transform().inverse().transform_points( # view to world
-                    cameras.transform_points( # world to ndc 
-                        ndc_coords
+    cam_coords =    cameras.transform_points( # world to ndc 
+                        cameras.get_world_to_view_transform().inverse().transform_points( # view to world
+                           ndc_coords
+                        )
                     )
-                )
     
     ndc_values = F.grid_sample(
         ray_values,
