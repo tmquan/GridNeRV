@@ -14,6 +14,9 @@ torch.cuda.empty_cache()
 torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+import kornia
+from kornia.augmentation import RandomAffine
+
 from pytorch3d.renderer.cameras import FoVPerspectiveCameras, look_at_view_transform
 from pytorch3d.renderer import NDCMultinomialRaysampler
 
@@ -397,7 +400,10 @@ class GridNeRVLightningModule(LightningModule):
 
         if self.stn:
             est_figure_ct_hidden = self.forward_screen(image3d=image3d, cameras=camera_hidden)
-            est_figure_ct_warped = self.forward_affine(est_figure_ct_hidden)
+            # affine_transform = torchvision.transforms.RandomAffine(degrees=(30, 30), translate=(0.1, 0.1), scale=(0.75, 0.75))
+            affine_transform = RandomAffine(degrees=(30, 30), translate=(0.1, 0.1), scale=(0.75, 1.25), p=1.0)
+            est_figure_ct_affine = affine_transform(est_figure_ct_hidden)
+            est_figure_ct_warped = self.forward_affine(est_figure_ct_affine)
     
         cam_view = [self.batch_size, 1]       
         est_volume_ct_random, \
@@ -464,7 +470,6 @@ class GridNeRVLightningModule(LightningModule):
         
             c_loss = self.gamma*im2d_loss + self.theta*view_loss + self.omega*view_cond
 
-
         if batch_idx==0:
             viz2d = torch.cat([
                         torch.cat([image3d[..., self.shape//2, :], 
@@ -480,6 +485,14 @@ class GridNeRVLightningModule(LightningModule):
                                    est_figure_xr_hidden,
                                    ], dim=-2).transpose(2, 3),
                     ], dim=-2)
+            if self.stn:
+                viz2d = torch.cat([
+                            viz2d, 
+                            torch.cat([est_figure_ct_hidden, 
+                                       est_figure_ct_affine, 
+                                       est_figure_ct_warped,
+                                        ], dim=-2).transpose(2, 3),
+                        ], dim=-2)
             grid = torchvision.utils.make_grid(viz2d, normalize=False, scale_each=False, nrow=1, padding=0)
             tensorboard = self.logger.experiment
             tensorboard.add_image(f'{stage}_samples', grid.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
