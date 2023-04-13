@@ -401,7 +401,10 @@ class GridNeRVLightningModule(LightningModule):
         if self.stn:
             est_figure_ct_hidden = self.forward_screen(image3d=image3d, cameras=camera_hidden)
             # affine_transform = torchvision.transforms.RandomAffine(degrees=(30, 30), translate=(0.1, 0.1), scale=(0.75, 0.75))
-            affine_transform = RandomAffine(degrees=(30, 30), translate=(0.1, 0.1), scale=(0.75, 1.25), p=1.0)
+            affine_transform = RandomAffine(degrees=(-10, 10), 
+                                            shear=(-10, 10, -10, 10),
+                                            translate=(0.1, 0.1), 
+                                            scale=(0.75, 1.25), p=1.0)
             est_figure_ct_affine = affine_transform(est_figure_ct_hidden)
             est_figure_ct_warped = self.forward_affine(est_figure_ct_affine)
     
