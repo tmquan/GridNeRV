@@ -404,7 +404,8 @@ class GridNeRVLightningModule(LightningModule):
             affine_transform = RandomAffine(shear=(-10, 10, -10, 10),
                                             scale=(0.75, 1.25, 0.75, 1.25),
                                             degrees=(-10, 10), 
-                                            translate=(0.1, 0.1), , p=1.0)
+                                            translate=(0.1, 0.1), 
+                                            p=1.0)
             est_figure_ct_affine = affine_transform(est_figure_ct_hidden)
             est_figure_ct_warped = self.forward_affine(est_figure_ct_affine)
     
