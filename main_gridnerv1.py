@@ -435,12 +435,12 @@ class GridNeRVLightningModule(LightningModule):
         im2d_loss_ct_random = self.loss(est_figure_ct_random, rec_figure_ct_random) 
         im2d_loss_ct_locked = self.loss(est_figure_ct_locked, rec_figure_ct_locked) 
         im2d_loss_xr_hidden = self.loss(src_figure_xr_hidden, est_figure_xr_hidden) 
-        im2d_loss_ct_hidden = self.loss(est_figure_ct_hidden, est_figure_ct_warped) 
-
+        
         im3d_loss_ct_random = self.loss(image3d, est_volume_ct_random) #+ self.loss(image3d, mid_volume_ct_random) 
         im3d_loss_ct_locked = self.loss(image3d, est_volume_ct_locked) #+ self.loss(image3d, mid_volume_ct_locked) 
 
         if not self.stn:
+            im2d_loss_ct_hidden = self.loss(est_figure_ct_hidden, est_figure_ct_warped) 
             im2d_loss_ct = im2d_loss_ct_random + im2d_loss_ct_locked + im2d_loss_ct_hidden   
         else:
             im2d_loss_ct = im2d_loss_ct_random + im2d_loss_ct_locked 
