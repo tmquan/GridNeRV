@@ -15,7 +15,6 @@ torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 from pytorch3d.renderer.cameras import FoVPerspectiveCameras, look_at_view_transform
-from pytorch3d.renderer.implicit.utils import ray_bundle_to_ray_points
 from pytorch3d.renderer import NDCMultinomialRaysampler
 
 from diffusers import UNet2DModel
@@ -30,7 +29,6 @@ from typing import Optional
 from monai.networks.nets import Unet, EfficientNetBN
 from monai.networks.layers.factories import Norm
 
-from positional_encodings.torch_encodings import PositionalEncodingPermute3D
 from datamodule import UnpairedDataModule
 from dvr.renderer import DirectVolumeFrontToBackRenderer, normalized, standardized
 
@@ -73,34 +71,38 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         self.n_pts_per_ray = n_pts_per_ray
         assert backbone in backbones.keys()
         if self.pe>0:
-            encoder_net = PositionalEncodingPermute3D(self.pe) # 8
-            pe_channels = self.pe
-            pos_enc = torch.ones([1, self.pe, self.shape, self.shape, self.shape])
-            encoded = encoder_net(pos_enc)
-            self.register_buffer('encoded', encoded)
-        else:
-            pe_channels = 0
-
-        if self.sh > 0:
-            from rsh import rsh_cart_2, rsh_cart_3
             # Generate grid
             zs = torch.linspace(-1, 1, steps=self.shape)
             ys = torch.linspace(-1, 1, steps=self.shape)
             xs = torch.linspace(-1, 1, steps=self.shape)
             z, y, x = torch.meshgrid(zs, ys, xs)
             zyx = torch.stack([z, y, x], dim=-1) # torch.Size([100, 100, 100, 3])
-            if self.sh==2: 
-                shw = rsh_cart_2(zyx.view(-1, 3)) 
-                assert out_channels == 9
-            elif self.sh==3: 
-                shw = rsh_cart_3(zyx.view(-1, 3))
-                assert out_channels == 16
-            else:
-                ValueError("Spherical Harmonics only support 2 and 3 degree")
-            # self.register_buffer('shbasis', shw.unsqueeze(0).permute(0, 4, 1, 2, 3))
-            self.register_buffer('shbasis', shw.view(out_channels, self.shape, self.shape, self.shape))
-            self.register_buffer('zyx', zyx)
-     
+            from nerfstudio.field_components import encodings
+            num_frequencies = self.pe
+            min_freq_exp = 0
+            max_freq_exp = 3
+            encoder = encodings.NeRFEncoding(
+                in_dim=self.pe, num_frequencies=num_frequencies, min_freq_exp=min_freq_exp, max_freq_exp=max_freq_exp
+            )
+            pebasis = encoder(zyx.view(-1, 3))
+            pebasis = pebasis.view(self.shape, self.shape, self.shape, -1).permute(3, 0, 1, 2)
+            self.register_buffer('pebasis', pebasis)
+
+        if self.sh > 0:
+            # Generate grid
+            zs = torch.linspace(-1, 1, steps=self.shape)
+            ys = torch.linspace(-1, 1, steps=self.shape)
+            xs = torch.linspace(-1, 1, steps=self.shape)
+            z, y, x = torch.meshgrid(zs, ys, xs)
+            zyx = torch.stack([z, y, x], dim=-1) # torch.Size([100, 100, 100, 3])
+            
+            from nerfstudio.field_components import encodings
+            encoder = encodings.SHEncoding(levels=self.sh)
+            assert out_channels == self.sh**2
+            shbasis = encoder(zyx.view(-1, 3))
+            shbasis = shbasis.view(self.shape, self.shape, self.shape, -1).permute(3, 0, 1, 2)
+            self.register_buffer('shbasis', shbasis)
+            
         self.clarity_net = UNet2DModel(
             sample_size=self.shape,  
             in_channels=1,  
@@ -128,7 +130,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         self.density_net = nn.Sequential(
             Unet(
                 spatial_dims=3,
-                in_channels=1+pe_channels,
+                in_channels=1+(2*3*self.pe),
                 out_channels=1,
                 channels=backbones[backbone],
                 strides=(2, 2, 2, 2, 2),
@@ -144,7 +146,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         self.mixture_net = nn.Sequential(
             Unet(
                 spatial_dims=3,
-                in_channels=2+pe_channels,
+                in_channels=2+(2*3*self.pe),
                 out_channels=1,
                 channels=backbones[backbone],
                 strides=(2, 2, 2, 2, 2),
@@ -160,7 +162,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         self.refiner_net = nn.Sequential(
             Unet(
                 spatial_dims=3,
-                in_channels=3+pe_channels,
+                in_channels=3+(2*3*self.pe),
                 out_channels=out_channels,
                 channels=backbones[backbone],
                 strides=(2, 2, 2, 2, 2),
@@ -190,33 +192,15 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         B = figures.shape[0]
         dist = 4.0 * torch.ones(B, device=_device)
         cameras = make_cameras(dist, elev, azim)
-        # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=n_pts_per_ray)
-        # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
-        
-        # # Generate camera intrinsics and extrinsics
-        # itransform = cameras.get_ndc_camera_transform().inverse()
-        # ndc_points = itransform.transform_points(ray_points)
-        # ndc_values = F.grid_sample(
-        #     clarity,
-        #     ndc_points.view(-1, self.shape, self.shape, self.shape, 3),
-        #     mode='bilinear', 
-        #     padding_mode='zeros', 
-        #     align_corners=True
-        # )
         
         # Generate a grid of ndc coordinates that covers the entire ndc volume
         ndc_z = torch.linspace(-1, 1, steps=self.shape, device=_device)
         ndc_y = torch.linspace(-1, 1, steps=self.shape, device=_device)
         ndc_x = torch.linspace(-1, 1, steps=self.shape, device=_device)
         ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
-        v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ndc_coords)
-        w2c_coords = cameras.transform_points(v2w_coords)
-        # cam_coords = cameras.get_ndc_camera_transform().inverse().transform_points(ndc_coords)
-        # cam_coords =    cameras.transform_points( # world to ndc 
-        #                     cameras.get_world_to_view_transform().inverse().transform_points( # view to world
-        #                     ndc_coords
-        #                     )
-        #                 )
+        v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ndc_coords) # view to world
+        w2c_coords = cameras.transform_points(v2w_coords) # world to ndc
+        
         ray_values = clarity
         ndc_values = F.grid_sample(
             ray_values,
@@ -232,29 +216,19 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         clarity = torch.cat([clarity_ct, clarity_xr])
 
         if self.pe > 0:
-            density = self.density_net(torch.cat([self.encoded.repeat(clarity.shape[0], 1, 1, 1, 1), clarity], dim=1))
-            mixture = self.mixture_net(torch.cat([self.encoded.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density], dim=1))
-            shcoeff = self.refiner_net(torch.cat([self.encoded.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density, mixture], dim=1))
+            density = self.density_net(torch.cat([self.pebasis.repeat(clarity.shape[0], 1, 1, 1, 1), clarity], dim=1))
+            mixture = self.mixture_net(torch.cat([self.pebasis.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density], dim=1))
+            shcoeff = self.refiner_net(torch.cat([self.pebasis.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density, mixture], dim=1))
         else:
             density = self.density_net(torch.cat([clarity], dim=1))
             mixture = self.mixture_net(torch.cat([clarity, density], dim=1))
             shcoeff = self.refiner_net(torch.cat([clarity, density, mixture], dim=1))
 
         if self.sh > 0:
-            # shcomps = shcoeff*self.shbasis.repeat(clarity.shape[0], 1, 1, 1, 1) 
-            shcomps_raw = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
-            shcomps = normalized(standardized(shcomps_raw))
-            # Take the absolute value of the spherical harmonic components
-            # shcomps_abs = torch.abs(shcomps_raw)
-            # shcomps_abs = shcomps_raw
-            # shcomps_max = shcomps_abs.max()
-            # shcomps_min = shcomps_abs.min()
-            # # Normalize the spherical harmonic components
-            # shcomps = (shcomps_abs - shcomps_min) / (shcomps_max - shcomps_min + 1e-8)
+            shcomps = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
         else:
             shcomps = shcoeff 
-
-        volumes = torch.cat([clarity, shcomps], dim=1)
+        volumes = shcomps
         volumes_ct, volumes_xr = torch.split(volumes, 1)
         volumes_ct = volumes_ct.repeat(n_views, 1, 1, 1, 1)
         volumes = torch.cat([volumes_ct, volumes_xr])
@@ -308,7 +282,8 @@ class GridNeRVLightningModule(LightningModule):
         
         self.inv_renderer = GridNeRVFrontToBackInverseRenderer(
             in_channels=2, 
-            out_channels=9 if self.sh==2 else 16 if self.sh==3 else 1, 
+            # out_channels=9 if self.sh==2 else 16 if self.sh==3 else 1, 
+            out_channels=self.sh**2, 
             shape=self.shape, 
             sh=self.sh, 
             pe=self.pe,
@@ -432,18 +407,14 @@ class GridNeRVLightningModule(LightningModule):
         )  
             
         # Reconstruct the appropriate XR
-        rec_figure_ct_random = self.forward_screen(image3d=est_volume_ct_random[:,1:], cameras=camera_random)
-        rec_figure_ct_locked = self.forward_screen(image3d=est_volume_ct_locked[:,1:], cameras=camera_locked)
-        est_figure_xr_hidden = self.forward_screen(image3d=est_volume_xr_hidden[:,1:], cameras=camera_hidden)
+        rec_figure_ct_random = self.forward_screen(image3d=est_volume_ct_random, cameras=camera_random)
+        rec_figure_ct_locked = self.forward_screen(image3d=est_volume_ct_locked, cameras=camera_locked)
+        est_figure_xr_hidden = self.forward_screen(image3d=est_volume_xr_hidden, cameras=camera_hidden)
 
         # Perform Post activation like DVGO      
-        mid_volume_ct_random = est_volume_ct_random[:,:1]
-        mid_volume_ct_locked = est_volume_ct_locked[:,:1]
-        mid_volume_xr_hidden = est_volume_xr_hidden[:,:1]
-
-        est_volume_ct_random = est_volume_ct_random[:,1:].sum(dim=1, keepdim=True)
-        est_volume_ct_locked = est_volume_ct_locked[:,1:].sum(dim=1, keepdim=True)
-        est_volume_xr_hidden = est_volume_xr_hidden[:,1:].sum(dim=1, keepdim=True)
+        est_volume_ct_random = est_volume_ct_random.sum(dim=1, keepdim=True)
+        est_volume_ct_locked = est_volume_ct_locked.sum(dim=1, keepdim=True)
+        est_volume_xr_hidden = est_volume_xr_hidden.sum(dim=1, keepdim=True)
 
         # Compute the loss
         # Per-pixel_loss
@@ -451,8 +422,8 @@ class GridNeRVLightningModule(LightningModule):
         im2d_loss_ct_locked = self.loss(est_figure_ct_locked, rec_figure_ct_locked) 
         im2d_loss_xr_hidden = self.loss(src_figure_xr_hidden, est_figure_xr_hidden) 
 
-        im3d_loss_ct_random = self.loss(image3d, est_volume_ct_random) + self.loss(image3d, mid_volume_ct_random) 
-        im3d_loss_ct_locked = self.loss(image3d, est_volume_ct_locked) + self.loss(image3d, mid_volume_ct_locked) 
+        im3d_loss_ct_random = self.loss(image3d, est_volume_ct_random) #+ self.loss(image3d, mid_volume_ct_random) 
+        im3d_loss_ct_locked = self.loss(image3d, est_volume_ct_locked) #+ self.loss(image3d, mid_volume_ct_locked) 
 
         im2d_loss_ct = im2d_loss_ct_random + im2d_loss_ct_locked 
         im2d_loss_xr = im2d_loss_xr_hidden    
@@ -629,7 +600,7 @@ if __name__ == "__main__":
     # Callback
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_stn{int(hparams.stn)}",
-        filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
+        # filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
         monitor="validation_loss_epoch",
         auto_insert_metric_name=True, 
         save_top_k=-1,
