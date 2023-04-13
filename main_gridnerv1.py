@@ -362,6 +362,7 @@ class GridNeRVLightningModule(LightningModule):
 
         est_figure_ct_random = self.forward_screen(image3d=image3d, cameras=camera_random)
         est_figure_ct_locked = self.forward_screen(image3d=image3d, cameras=camera_locked)
+        
         # XR pathway
         if self.stn:
             src_figure_xr_hidden = self.forward_affine(image2d)
@@ -394,6 +395,10 @@ class GridNeRVLightningModule(LightningModule):
         camera_locked = make_cameras(est_dist_locked, est_elev_locked, est_azim_locked)
         camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden)
 
+        if self.stn:
+            est_figure_ct_hidden = self.forward_screen(image3d=image3d, cameras=camera_hidden)
+            est_figure_ct_warped = self.forward_affine(est_figure_ct_hidden)
+    
         cam_view = [self.batch_size, 1]       
         est_volume_ct_random, \
         est_volume_ct_locked, \
@@ -421,12 +426,17 @@ class GridNeRVLightningModule(LightningModule):
         im2d_loss_ct_random = self.loss(est_figure_ct_random, rec_figure_ct_random) 
         im2d_loss_ct_locked = self.loss(est_figure_ct_locked, rec_figure_ct_locked) 
         im2d_loss_xr_hidden = self.loss(src_figure_xr_hidden, est_figure_xr_hidden) 
+        im2d_loss_ct_hidden = self.loss(est_figure_ct_hidden, est_figure_ct_warped) 
 
         im3d_loss_ct_random = self.loss(image3d, est_volume_ct_random) #+ self.loss(image3d, mid_volume_ct_random) 
         im3d_loss_ct_locked = self.loss(image3d, est_volume_ct_locked) #+ self.loss(image3d, mid_volume_ct_locked) 
 
-        im2d_loss_ct = im2d_loss_ct_random + im2d_loss_ct_locked 
-        im2d_loss_xr = im2d_loss_xr_hidden    
+        if not self.stn:
+            im2d_loss_ct = im2d_loss_ct_random + im2d_loss_ct_locked + im2d_loss_ct_hidden   
+        else:
+            im2d_loss_ct = im2d_loss_ct_random + im2d_loss_ct_locked 
+            
+        im2d_loss_xr = im2d_loss_xr_hidden 
         im2d_loss = im2d_loss_ct + im2d_loss_xr
         
         im3d_loss_ct = im3d_loss_ct_random + im3d_loss_ct_locked
