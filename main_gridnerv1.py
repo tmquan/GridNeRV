@@ -490,11 +490,21 @@ class GridNeRVLightningModule(LightningModule):
                     ], dim=-2)
             if self.stn:
                 viz2d = torch.cat([
-                            viz2d, 
-                            torch.cat([est_figure_ct_hidden, 
-                                       est_figure_ct_affine, 
-                                       est_figure_ct_warped,
-                                        ], dim=-2).transpose(2, 3),
+                            torch.cat([image3d[..., self.shape//2, :], 
+                                    est_figure_ct_random,
+                                    est_figure_ct_locked,
+                                    est_figure_ct_affine
+                                    ], dim=-2).transpose(2, 3),
+                            torch.cat([est_volume_ct_locked[..., self.shape//2, :],
+                                    rec_figure_ct_random,
+                                    rec_figure_ct_locked,
+                                    est_figure_ct_warped
+                                    ], dim=-2).transpose(2, 3),
+                            torch.cat([image2d, 
+                                    src_figure_xr_hidden,
+                                    est_volume_xr_hidden[..., self.shape//2, :],
+                                    est_figure_xr_hidden,
+                                    ], dim=-2).transpose(2, 3),
                         ], dim=-2)
             grid = torchvision.utils.make_grid(viz2d, normalize=False, scale_each=False, nrow=1, padding=0)
             tensorboard = self.logger.experiment
