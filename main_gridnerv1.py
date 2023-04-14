@@ -368,7 +368,8 @@ class GridNeRVLightningModule(LightningModule):
         
         # XR pathway
         if self.stn:
-            src_figure_xr_hidden = self.forward_affine(image2d)
+            with torch.no_grad():
+                src_figure_xr_hidden = self.forward_affine(image2d)
         else:
             src_figure_xr_hidden = image2d
 
@@ -664,7 +665,7 @@ if __name__ == "__main__":
             # swa_callback
         ],
         accumulate_grad_batches=4 if not hparams.cam and not hparams.gan else 1,
-        strategy="auto", 
+        strategy="ddp_find_unused_parameters_true", 
         precision=16 if hparams.amp else 32,
         # gradient_clip_val=0.01, 
         # gradient_clip_algorithm="value"
