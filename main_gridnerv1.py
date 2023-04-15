@@ -471,14 +471,16 @@ class GridNeRVLightningModule(LightningModule):
                                             torch.cat([est_azim_locked, est_elev_locked]))
             view_loss_ct = view_loss_ct_random + view_loss_ct_locked
 
-            view_cond_xr = self.loss(est_azim_hidden, torch.zeros_like(est_azim_hidden)) \
-                         + self.loss(est_elev_hidden, torch.zeros_like(est_elev_hidden))
+            view_cond_xr = self.loss(torch.cat([torch.zeros_like(est_azim_hidden), torch.zeros_like(est_elev_hidden)]), 
+                                     torch.cat([est_azim_hidden, est_elev_hidden]))
+                         
+            # view_cond_xr = self.loss(est_azim_hidden, torch.zeros_like(est_azim_hidden)) \
+            #              + self.loss(est_elev_hidden, torch.zeros_like(est_elev_hidden))
     
             view_loss = view_loss_ct 
             view_cond = view_cond_xr
 
             self.log(f'{stage}_view_loss', view_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
-        
             c_loss = self.gamma*im2d_loss + self.theta*view_loss + self.omega*view_cond
 
         if batch_idx==0:
