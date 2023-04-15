@@ -254,6 +254,7 @@ class GridNeRVLightningModule(LightningModule):
         self.stn = hparams.stn
         self.gan = hparams.gan
         self.cam = hparams.cam
+        self.sup = hparams.sup
         self.shape = hparams.shape
         self.alpha = hparams.alpha
         self.gamma = hparams.gamma
@@ -407,26 +408,43 @@ class GridNeRVLightningModule(LightningModule):
             est_azim_locked, est_elev_locked = src_azim_locked, src_elev_locked 
             est_azim_hidden, est_elev_hidden = torch.zeros(self.batch_size, device=_device), torch.zeros(self.batch_size, device=_device)
 
-        camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
-        camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
-        camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden)
+        if self.sup:
+            camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
+            camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
+            camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden)
+        else:
+            camera_random = make_cameras(est_dist_random, est_elev_random, est_azim_random)
+            camera_locked = make_cameras(est_dist_locked, est_elev_locked, est_azim_locked)
+            camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden)
 
         if self.stn:
             est_figure_ct_hidden = self.forward_screen(image3d=image3d, cameras=camera_hidden)
             est_figure_ct_affine = self.affine_transform(est_figure_ct_hidden).detach()
             est_figure_ct_warped = self.forward_affine(est_figure_ct_affine)
     
-        cam_view = [self.batch_size, 1]       
-        est_volume_ct_random, \
-        est_volume_ct_locked, \
-        est_volume_xr_hidden = torch.split(
-            self.forward_volume(
-                image2d=torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden]),
-                azim=torch.cat([src_azim_random.view(cam_view), src_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
-                elev=torch.cat([src_elev_random.view(cam_view), src_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
-                n_views=2,
-            ), self.batch_size
-        )  
+        cam_view = [self.batch_size, 1]     
+        if self.sup:  
+            est_volume_ct_random, \
+            est_volume_ct_locked, \
+            est_volume_xr_hidden = torch.split(
+                self.forward_volume(
+                    image2d=torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden]),
+                    azim=torch.cat([src_azim_random.view(cam_view), src_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
+                    elev=torch.cat([src_elev_random.view(cam_view), src_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
+                    n_views=2,
+                ), self.batch_size
+            )  
+        else:
+            est_volume_ct_random, \
+            est_volume_ct_locked, \
+            est_volume_xr_hidden = torch.split(
+                self.forward_volume(
+                    image2d=torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden]),
+                    azim=torch.cat([est_azim_random.view(cam_view), est_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
+                    elev=torch.cat([est_elev_random.view(cam_view), est_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
+                    n_views=2,
+                ), self.batch_size
+            )  
             
         # Reconstruct the appropriate XR
         rec_figure_ct_random = self.forward_screen(image3d=est_volume_ct_random, cameras=camera_random)
@@ -613,6 +631,7 @@ if __name__ == "__main__":
     parser.add_argument("--stn", action="store_true", help="whether to train with spatial transformer")
     parser.add_argument("--gan", action="store_true", help="whether to train with GAN")
     parser.add_argument("--cam", action="store_true", help="train cam locked or hidden")
+    parser.add_argument("--sup", action="store_true", help="train cam ct or not")
     parser.add_argument("--amp", action="store_true", help="train with mixed precision or not")
     
     parser.add_argument("--alpha", type=float, default=1., help="vol loss")
