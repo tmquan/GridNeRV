@@ -256,6 +256,8 @@ class GridNeRVLightningModule(LightningModule):
         self.cam = hparams.cam
         self.sup = hparams.sup
         self.ckpt = hparams.ckpt
+        self.strict = hparams.strict
+        
         self.shape = hparams.shape
         self.alpha = hparams.alpha
         self.gamma = hparams.gamma
@@ -296,11 +298,11 @@ class GridNeRVLightningModule(LightningModule):
         )
         if self.ckpt:
             # load the checkpoint
-            checkpoint = torch.load(self.ckpt)
+            checkpoint = torch.load(self.ckpt)["state_dict"]
             # create a new state dict with the keys that exist in both the checkpoint and the model
-            state_dict = {k: v for k, v in checkpoint.items() if k in self.inv_renderer.state_dict()}
+            state_dict = {k: v for k, v in checkpoint.items() if k in self.state_dict()}
             # load the state dict into the model, ignoring non-existent keys
-            self.inv_renderer.load_state_dict(state_dict, strict=False)
+            self.load_state_dict(state_dict, strict=self.strict)
             
         if self.stn:
             self.stn_modifier = GridNeRVFrontToBackFrustumFeaturer(
@@ -641,6 +643,7 @@ if __name__ == "__main__":
     parser.add_argument("--cam", action="store_true", help="train cam locked or hidden")
     parser.add_argument("--sup", action="store_true", help="train cam ct or not")
     parser.add_argument("--amp", action="store_true", help="train with mixed precision or not")
+    parser.add_argument("--strict", action="store_true", help="checkpoint loading")
     
     parser.add_argument("--alpha", type=float, default=1., help="vol loss")
     parser.add_argument("--gamma", type=float, default=1., help="img loss")
@@ -817,7 +820,7 @@ if __name__ == "__main__":
         train_dataloaders=datamodule.train_dataloader(), 
         val_dataloaders=datamodule.val_dataloader(),
         # datamodule=datamodule,
-        # ckpt_path=hparams.ckpt if hparams.ckpt is not None else None, # "some/path/to/my_checkpoint.ckpt"
+        ckpt_path=hparams.ckpt if hparams.ckpt is not None and hparams.strict else None, # "some/path/to/my_checkpoint.ckpt"
     )
 
     # test
