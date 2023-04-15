@@ -407,8 +407,8 @@ class GridNeRVLightningModule(LightningModule):
             est_azim_locked, est_elev_locked = src_azim_locked, src_elev_locked 
             est_azim_hidden, est_elev_hidden = torch.zeros(self.batch_size, device=_device), torch.zeros(self.batch_size, device=_device)
 
-        camera_random = make_cameras(est_dist_random, est_elev_random, est_azim_random)
-        camera_locked = make_cameras(est_dist_locked, est_elev_locked, est_azim_locked)
+        camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
+        camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
         camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden)
 
         if self.stn:
@@ -422,8 +422,8 @@ class GridNeRVLightningModule(LightningModule):
         est_volume_xr_hidden = torch.split(
             self.forward_volume(
                 image2d=torch.cat([est_figure_ct_random, est_figure_ct_locked, src_figure_xr_hidden]),
-                azim=torch.cat([est_azim_random.view(cam_view), est_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
-                elev=torch.cat([est_elev_random.view(cam_view), est_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
+                azim=torch.cat([src_azim_random.view(cam_view), src_azim_locked.view(cam_view), est_azim_hidden.view(cam_view)]),
+                elev=torch.cat([src_elev_random.view(cam_view), src_elev_locked.view(cam_view), est_elev_hidden.view(cam_view)]),
                 n_views=2,
             ), self.batch_size
         )  
