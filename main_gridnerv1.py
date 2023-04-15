@@ -255,6 +255,7 @@ class GridNeRVLightningModule(LightningModule):
         self.gan = hparams.gan
         self.cam = hparams.cam
         self.sup = hparams.sup
+        self.ckpt = hparams.ckpt
         self.shape = hparams.shape
         self.alpha = hparams.alpha
         self.gamma = hparams.gamma
@@ -293,7 +294,13 @@ class GridNeRVLightningModule(LightningModule):
             pe=self.pe,
             backbone=self.backbone,
         )
-
+        if self.ckpt:
+            pass
+            # checkpoint = torch.load(self.ckpt)
+            # print(checkpoint.keys())
+            # print(checkpoint['state_dict'].keys())
+            # # self.inv_renderer.load_state_dict(checkpoint['state_dict']inv_renderer'])
+            
         if self.stn:
             self.stn_modifier = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
