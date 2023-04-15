@@ -324,8 +324,8 @@ class GridNeRVLightningModule(LightningModule):
                 out_channels=2, # azim + elev + prob
                 backbone=self.backbone,
             )
-            # self.cam_settings.model._fc.weight.data.zero_()
-            # self.cam_settings.model._fc.bias.data.zero_()
+            self.cam_settings.model._fc.weight.data.zero_()
+            self.cam_settings.model._fc.bias.data.zero_()
 
         if self.gan:
             self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
@@ -333,8 +333,8 @@ class GridNeRVLightningModule(LightningModule):
                 out_channels=2, # azim + elev + prob
                 backbone=self.backbone,
             )
-            # self.cam_settings.model._fc.weight.data.zero_()
-            # self.cam_settings.model._fc.bias.data.zero_()
+            self.cam_settings.model._fc.weight.data.zero_()
+            self.cam_settings.model._fc.bias.data.zero_()
             
             self.critic_model = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
