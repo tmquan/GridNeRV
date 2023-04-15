@@ -301,8 +301,13 @@ class GridNeRVLightningModule(LightningModule):
             )
             self.stn_modifier.model._fc.weight.data.zero_()
             self.stn_modifier.model._fc.bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
-            
-        if self.cam or self.gan:
+            # affine_transform = torchvision.transforms.RandomAffine(degrees=(30, 30), translate=(0.1, 0.1), scale=(0.75, 0.75))
+            self.affine_transform = RandomAffine(shear=(-10, 10, -10, 10),
+                                                scale=(0.75, 1.25, 0.75, 1.25),
+                                                degrees=(-10, 10), 
+                                                translate=(0.1, 0.1), 
+                                                p=1.0)
+        if self.cam:
             self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
                 out_channels=2, # azim + elev + prob
@@ -312,6 +317,14 @@ class GridNeRVLightningModule(LightningModule):
             self.cam_settings.model._fc.bias.data.zero_()
 
         if self.gan:
+            self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
+                in_channels=1, 
+                out_channels=2, # azim + elev + prob
+                backbone=self.backbone,
+            )
+            self.cam_settings.model._fc.weight.data.zero_()
+            self.cam_settings.model._fc.bias.data.zero_()
+            
             self.critic_model = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
                 out_channels=2, # azim + elev + prob
@@ -320,7 +333,7 @@ class GridNeRVLightningModule(LightningModule):
             self.critic_model.model._fc.weight.data.zero_()
             self.critic_model.model._fc.bias.data.zero_()
 
-        self.automatic_optimization = False if self.cam or self.gan else True
+        self.automatic_optimization = False if self.gan else True
         self.train_step_outputs = []
         self.validation_step_outputs = []
         self.loss = nn.L1Loss(reduction="mean")
@@ -367,9 +380,8 @@ class GridNeRVLightningModule(LightningModule):
         est_figure_ct_locked = self.forward_screen(image3d=image3d, cameras=camera_locked)
         
         # XR pathway
-        if self.stn:
-            with torch.no_grad():
-                src_figure_xr_hidden = self.forward_affine(image2d)
+        if self.stn: 
+            src_figure_xr_hidden = self.forward_affine(image2d).detach()      
         else:
             src_figure_xr_hidden = image2d
 
@@ -401,13 +413,7 @@ class GridNeRVLightningModule(LightningModule):
 
         if self.stn:
             est_figure_ct_hidden = self.forward_screen(image3d=image3d, cameras=camera_hidden)
-            # affine_transform = torchvision.transforms.RandomAffine(degrees=(30, 30), translate=(0.1, 0.1), scale=(0.75, 0.75))
-            affine_transform = RandomAffine(shear=(-10, 10, -10, 10),
-                                            scale=(0.75, 1.25, 0.75, 1.25),
-                                            degrees=(-10, 10), 
-                                            translate=(0.1, 0.1), 
-                                            p=1.0)
-            est_figure_ct_affine = affine_transform(est_figure_ct_hidden)
+            est_figure_ct_affine = self.affine_transform(est_figure_ct_hidden).detach()
             est_figure_ct_warped = self.forward_affine(est_figure_ct_affine)
     
         cam_view = [self.batch_size, 1]       
@@ -458,7 +464,7 @@ class GridNeRVLightningModule(LightningModule):
 
         p_loss = self.gamma*im2d_loss + self.alpha*im3d_loss
         
-        if self.cam or self.gan:
+        if self.cam:
             view_loss_ct_random = self.loss(torch.cat([src_azim_random, src_elev_random]), 
                                             torch.cat([est_azim_random, est_elev_random]))
             view_loss_ct_locked = self.loss(torch.cat([src_azim_locked, src_elev_locked]), 
@@ -569,18 +575,7 @@ class GridNeRVLightningModule(LightningModule):
         self.validation_step_outputs.clear()  # free memory
         
     def configure_optimizers(self):
-        if not self.cam and not self.gan:
-            # If neither --cam nor --gan are set, use one optimizer to optimize Unprojector model
-            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
-            return [optimizer], [scheduler]
-        elif self.cam and not self.gan:
-            # If --cam is set, optimize Unprojector and Camera model using 2 optimizers
-            optimizer = torch.optim.AdamW(list(self.inv_renderer.parameters()) 
-                                        + list(self.cam_settings.parameters()), lr=self.lr, betas=(0.5, 0.999))
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
-            return [optimizer], [scheduler]
-        elif self.gan:
+        if self.gan:
             # If --gan is set, optimize Unprojector, Camera as generator, and Discriminator with 2 optimizers
             optimizer_g = torch.optim.AdamW(list(self.inv_renderer.parameters()) 
                                           + list(self.cam_settings.parameters()), lr=self.lr, betas=(0.5, 0.999))
@@ -588,6 +583,11 @@ class GridNeRVLightningModule(LightningModule):
             scheduler_g = torch.optim.lr_scheduler.MultiStepLR(optimizer_g, milestones=[100, 200], gamma=0.1)
             scheduler_d = torch.optim.lr_scheduler.MultiStepLR(optimizer_d, milestones=[100, 200], gamma=0.1)
             return [optimizer_g, optimizer_d], [scheduler_g, scheduler_d] 
+        else:
+            # 
+            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
+            return [optimizer], [scheduler]
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -665,7 +665,7 @@ if __name__ == "__main__":
             # swa_callback
         ],
         accumulate_grad_batches=4 if not hparams.cam and not hparams.gan else 1,
-        strategy="ddp_find_unused_parameters_true", 
+        strategy="auto", 
         precision=16 if hparams.amp else 32,
         # gradient_clip_val=0.01, 
         # gradient_clip_algorithm="value"
