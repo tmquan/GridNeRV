@@ -295,16 +295,12 @@ class GridNeRVLightningModule(LightningModule):
             backbone=self.backbone,
         )
         if self.ckpt:
-            # checkpoint = torch.load(self.ckpt)
-            # print(checkpoint.keys())
-            # print(checkpoint['state_dict'].keys())
-            # # self.inv_renderer.load_state_dict(checkpoint['state_dict']['inv_renderer'])
-            # model_dict = checkpoint['state_dict']
-            # # 1. filter out unnecessary keys
-            # model_dict = {k: v for k, v in model_dict.items() if k in model_dict and k.startswith("inv_renderer")}
-            # # 3. load the new state dict
-            # self.inv_renderer.load_state_dict(model_dict)
-            pass
+            # load the checkpoint
+            checkpoint = torch.load(self.ckpt)
+            # create a new state dict with the keys that exist in both the checkpoint and the model
+            state_dict = {k: v for k, v in checkpoint.items() if k in self.inv_renderer.state_dict()}
+            # load the state dict into the model, ignoring non-existent keys
+            self.inv_renderer.load_state_dict(state_dict, strict=False)
             
         if self.stn:
             self.stn_modifier = GridNeRVFrontToBackFrustumFeaturer(
