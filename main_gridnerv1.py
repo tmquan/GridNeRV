@@ -295,11 +295,16 @@ class GridNeRVLightningModule(LightningModule):
             backbone=self.backbone,
         )
         if self.ckpt:
-            pass
             # checkpoint = torch.load(self.ckpt)
             # print(checkpoint.keys())
             # print(checkpoint['state_dict'].keys())
-            # # self.inv_renderer.load_state_dict(checkpoint['state_dict']inv_renderer'])
+            # # self.inv_renderer.load_state_dict(checkpoint['state_dict']['inv_renderer'])
+            # model_dict = checkpoint['state_dict']
+            # # 1. filter out unnecessary keys
+            # model_dict = {k: v for k, v in model_dict.items() if k in model_dict and k.startswith("inv_renderer")}
+            # # 3. load the new state dict
+            # self.inv_renderer.load_state_dict(model_dict)
+            pass
             
         if self.stn:
             self.stn_modifier = GridNeRVFrontToBackFrustumFeaturer(
@@ -816,7 +821,7 @@ if __name__ == "__main__":
         train_dataloaders=datamodule.train_dataloader(), 
         val_dataloaders=datamodule.val_dataloader(),
         # datamodule=datamodule,
-        ckpt_path=hparams.ckpt if hparams.ckpt is not None else None, # "some/path/to/my_checkpoint.ckpt"
+        # ckpt_path=hparams.ckpt if hparams.ckpt is not None else None, # "some/path/to/my_checkpoint.ckpt"
     )
 
     # test
