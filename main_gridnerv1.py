@@ -298,7 +298,7 @@ class GridNeRVLightningModule(LightningModule):
         )
         if self.ckpt:
             # load the checkpoint
-            checkpoint = torch.load(self.ckpt)["state_dict"]
+            checkpoint = torch.load(self.ckpt, map_location=torch.device('cpu'))["state_dict"]
             # create a new state dict with the keys that exist in both the checkpoint and the model
             state_dict = {k: v for k, v in checkpoint.items() if k in self.state_dict()}
             # load the state dict into the model, ignoring non-existent keys
