@@ -28,7 +28,7 @@ from lightning.pytorch.callbacks import LearningRateMonitor
 from lightning.pytorch.callbacks import StochasticWeightAveraging
 from lightning.pytorch.loggers import TensorBoardLogger
 from argparse import ArgumentParser
-from typing import Optional
+from typing import Optional, Union, List
 from monai.networks.nets import Unet, EfficientNetBN
 from monai.networks.layers.factories import Norm
 
@@ -247,6 +247,13 @@ def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor):
     )
     return FoVPerspectiveCameras(R=R, T=T, fov=45, aspect_ratio=1).to(_device)
 
+def torch_distributions_uniform_or_zeros(shape=[1, 1], device=torch.device('cpu')):
+    rng = torch.randint(low=0, high=2, size=(1, 1))
+    if rng:
+        return torch.distributions.uniform.Uniform(-1.0, 1.0).sample(shape).to(device)
+    else:
+        return torch.zeros(shape, device=device)
+    
 class GridNeRVLightningModule(LightningModule):
     def __init__(self, hparams, **kwargs):
         super().__init__()
@@ -359,25 +366,13 @@ class GridNeRVLightningModule(LightningModule):
         image2d = batch["image2d"]
             
         # Construct the random cameras
-        # src_azim_random = torch.randn(self.batch_size, device=_device)
-        # src_elev_random = torch.randn(self.batch_size, device=_device)
-        rng = torch.randint(low=0, high=2, size=(1, 1))
-        if rng:
-            src_azim_random = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device) 
-            src_elev_random = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device) 
-        else:
-            src_azim_random = torch.zeros(self.batch_size, device=_device)
-            src_elev_random = torch.zeros(self.batch_size, device=_device)
+        src_azim_random = torch_distributions_uniform_or_zeros([self.batch_size], device=_device)
+        src_elev_random = torch_distributions_uniform_or_zeros([self.batch_size], device=_device)
         src_dist_random = 4.0 * torch.ones(self.batch_size, device=_device)
         camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
         
-        rng = torch.randint(low=0, high=2, size=(1, 1))
-        if rng:
-            src_azim_locked = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device) 
-            src_elev_locked = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device) 
-        else:
-            src_azim_locked = torch.zeros(self.batch_size, device=_device)
-            src_elev_locked = torch.zeros(self.batch_size, device=_device)
+        src_azim_locked = torch_distributions_uniform_or_zeros([self.batch_size], device=_device)
+        src_elev_locked = torch_distributions_uniform_or_zeros([self.batch_size], device=_device)
         src_dist_locked = 4.0 * torch.ones(self.batch_size, device=_device)
         camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
 
