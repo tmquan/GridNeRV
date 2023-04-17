@@ -307,7 +307,7 @@ class GridNeRVLightningModule(LightningModule):
         if self.stn:
             self.stn_modifier = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
-                out_channels=6, # azim + elev + prob
+                out_channels=6, 
                 backbone=self.backbone,
             )
             self.stn_modifier.model._fc.weight.data.zero_()
@@ -321,30 +321,14 @@ class GridNeRVLightningModule(LightningModule):
         if self.cam:
             self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
                 in_channels=1, 
-                out_channels=2, # azim + elev + prob
+                out_channels=2, 
                 backbone=self.backbone,
             )
+            # self.cam_settings.model._fc.weight.data.zero_()
+            # self.cam_settings.model._fc.bias.data.zero_()
             self.cam_settings.model._fc.weight.data.zero_()
-            self.cam_settings.model._fc.bias.data.zero_()
+            self.cam_settings.model._fc.bias.data.copy_(torch.tensor([0.01, 0.01], dtype=torch.float))
 
-        if self.gan:
-            self.cam_settings = GridNeRVFrontToBackFrustumFeaturer(
-                in_channels=1, 
-                out_channels=2, # azim + elev + prob
-                backbone=self.backbone,
-            )
-            self.cam_settings.model._fc.weight.data.zero_()
-            self.cam_settings.model._fc.bias.data.zero_()
-            
-            self.critic_model = GridNeRVFrontToBackFrustumFeaturer(
-                in_channels=1, 
-                out_channels=2, # azim + elev + prob
-                backbone=self.backbone,
-            )
-            # self.critic_model.model._fc.weight.data.zero_()
-            # self.critic_model.model._fc.bias.data.zero_()
-
-        self.automatic_optimization = False if self.gan else True
         self.train_step_outputs = []
         self.validation_step_outputs = []
         self.loss = nn.L1Loss(reduction="mean")
@@ -377,13 +361,13 @@ class GridNeRVLightningModule(LightningModule):
         # Construct the random cameras
         # src_azim_random = torch.randn(self.batch_size, device=_device).clamp_(-0.9, 0.9)
         # src_elev_random = torch.randn(self.batch_size, device=_device).clamp_(-0.9, 0.9)
-        src_azim_random = torch.distributions.uniform.Uniform(-0.5, 0.5).sample([self.batch_size]).to(_device) 
-        src_elev_random = torch.distributions.uniform.Uniform(-0.5, 0.5).sample([self.batch_size]).to(_device) 
+        src_azim_random = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device) 
+        src_elev_random = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device) 
         src_dist_random = 4.0 * torch.ones(self.batch_size, device=_device)
         camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
         
-        src_azim_locked = torch.distributions.uniform.Uniform(-0.5, 0.5).sample([self.batch_size]).to(_device) 
-        src_elev_locked = torch.distributions.uniform.Uniform(-0.5, 0.5).sample([self.batch_size]).to(_device) 
+        src_azim_locked = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device) 
+        src_elev_locked = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device) 
         src_dist_locked = 4.0 * torch.ones(self.batch_size, device=_device)
         camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
 
