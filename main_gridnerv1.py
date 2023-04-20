@@ -142,7 +142,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ),
         )
 
@@ -158,7 +158,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ),
         )
 
@@ -174,7 +174,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ), 
         )
 
@@ -245,7 +245,7 @@ def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor):
         elev=elev.float() * 90, 
         azim=azim.float() * 180
     )
-    return FoVPerspectiveCameras(R=R, T=T, fov=45, aspect_ratio=1).to(_device)
+    return FoVPerspectiveCameras(R=R, T=T, fov=36, aspect_ratio=1).to(_device)
 
 def torch_distributions_uniform_or_zeros(shape=[1, 1], device=torch.device('cpu')):
     rng = torch.randint(low=0, high=2, size=(1, 1))
@@ -685,12 +685,12 @@ if __name__ == "__main__":
             checkpoint_callback,
             # swa_callback
         ],
-        accumulate_grad_batches=4 if not hparams.cam and not hparams.gan else 1,
+        accumulate_grad_batches=4 if not hparams.gan else 1,
         strategy="auto", 
         precision=16 if hparams.amp else 32,
         # gradient_clip_val=0.01, 
         # gradient_clip_algorithm="value"
-        # stochastic_weight_avg=True,
+        stochastic_weight_avg=True if not hparams.gan else False,
         # deterministic=False,
         profiler="advanced"
     )
