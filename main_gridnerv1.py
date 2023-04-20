@@ -683,14 +683,14 @@ if __name__ == "__main__":
         callbacks=[
             lr_callback,
             checkpoint_callback,
-            # swa_callback
+            swa_callback if not hparams.gan else None,
         ],
         accumulate_grad_batches=4 if not hparams.gan else 1,
         strategy="auto", 
         precision=16 if hparams.amp else 32,
         # gradient_clip_val=0.01, 
         # gradient_clip_algorithm="value"
-        stochastic_weight_avg=True if not hparams.gan else False,
+        # stochastic_weight_avg=True if not hparams.gan else False,
         # deterministic=False,
         profiler="advanced"
     )
