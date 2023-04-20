@@ -142,7 +142,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ),
         )
 
@@ -158,7 +158,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ),
         )
 
@@ -174,7 +174,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                # dropout=0.2,
+                dropout=0.2,
             ), 
         )
 
@@ -331,10 +331,10 @@ class GridNeRVLightningModule(LightningModule):
                 out_channels=2, 
                 backbone=self.backbone,
             )
-            # self.cam_settings.model._fc.weight.data.zero_()
-            # self.cam_settings.model._fc.bias.data.zero_()
             self.cam_settings.model._fc.weight.data.zero_()
-            self.cam_settings.model._fc.bias.data.copy_(torch.tensor([0.01, 0.01], dtype=torch.float))
+            self.cam_settings.model._fc.bias.data.zero_()
+            # self.cam_settings.model._fc.weight.data.copy_(torch.tensor([0.1, 0.1], dtype=torch.float))
+            # self.cam_settings.model._fc.bias.data.copy_(torch.tensor([0.1, 0.1], dtype=torch.float))
 
         self.train_step_outputs = []
         self.validation_step_outputs = []
