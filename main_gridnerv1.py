@@ -338,7 +338,7 @@ class GridNeRVLightningModule(LightningModule):
 
         self.train_step_outputs = []
         self.validation_step_outputs = []
-        self.loss = nn.L1Loss(reduction="mean")
+        self.loss = nn.MSELoss(reduction="mean")
 
     # Spatial transformer network forward function
     def forward_affine(self, x):
