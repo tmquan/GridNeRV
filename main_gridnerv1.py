@@ -237,7 +237,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         volumes = torch.cat([volumes_ct, volumes_xr])
         return volumes 
 
-def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor, is_ortho=False):
+def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor, is_training=False):
     assert dist.device == elev.device == azim.device
     _device = dist.device
     R, T = look_at_view_transform(
@@ -245,10 +245,11 @@ def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor, is_
         elev=elev.float() * 90, 
         azim=azim.float() * 180
     )
-    if not is_ortho:
-        return FoVPerspectiveCameras(R=R, T=T, fov=40, znear=2.0, zfar=6.0).to(_device)
+    if is_training:
+        fov = torch.randint(low=30, high=41, size=(1, 1))
     else:
-        return FoVOrthographicCameras(R=R, T=T, znear=2.0, zfar=6.0).to(_device)
+        fov = 36
+    return FoVPerspectiveCameras(R=R, T=T, fov=fov, znear=8.0, zfar=12.0).to(_device)
 
 def torch_distributions_uniform_or_zeros(shape=[1, 1], device=torch.device('cpu')):
     rng = torch.randint(low=0, high=2, size=(1, 1))
@@ -293,8 +294,8 @@ class GridNeRVLightningModule(LightningModule):
             image_width=self.shape, 
             image_height=self.shape, 
             n_pts_per_ray=self.n_pts_per_ray, 
-            min_depth=2.0, 
-            max_depth=6.0, 
+            min_depth=8.0, 
+            max_depth=12.0, 
         )
         
         self.inv_renderer = GridNeRVFrontToBackInverseRenderer(
@@ -371,13 +372,13 @@ class GridNeRVLightningModule(LightningModule):
         # Construct the random cameras
         src_azim_random = torch_distributions_uniform_or_zeros([self.batch_size], device=_device)
         src_elev_random = torch_distributions_uniform_or_zeros([self.batch_size], device=_device)
-        src_dist_random = 4.0 * torch.ones(self.batch_size, device=_device)
-        camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
+        src_dist_random = 10. * torch.ones(self.batch_size, device=_device)
+        camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random, is_training=(stage=='train'))
         
         src_azim_locked = torch_distributions_uniform_or_zeros([self.batch_size], device=_device)
         src_elev_locked = torch_distributions_uniform_or_zeros([self.batch_size], device=_device)
-        src_dist_locked = 4.0 * torch.ones(self.batch_size, device=_device)
-        camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
+        src_dist_locked = 10. * torch.ones(self.batch_size, device=_device)
+        camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked, is_training=(stage=='train'))
 
         est_figure_ct_random = self.forward_screen(image3d=image3d, cameras=camera_random)
         est_figure_ct_locked = self.forward_screen(image3d=image3d, cameras=camera_locked)
@@ -388,9 +389,9 @@ class GridNeRVLightningModule(LightningModule):
         else:
             src_figure_xr_hidden = image2d
 
-        est_dist_random = 4.0 * torch.ones(self.batch_size, device=_device)
-        est_dist_locked = 4.0 * torch.ones(self.batch_size, device=_device)
-        est_dist_hidden = 4.0 * torch.ones(self.batch_size, device=_device)
+        est_dist_random = 10. * torch.ones(self.batch_size, device=_device)
+        est_dist_locked = 10. * torch.ones(self.batch_size, device=_device)
+        est_dist_hidden = 10. * torch.ones(self.batch_size, device=_device)
 
         if self.cam:        
             # Reconstruct the cameras
@@ -411,13 +412,13 @@ class GridNeRVLightningModule(LightningModule):
             est_azim_hidden, est_elev_hidden = torch.zeros(self.batch_size, device=_device), torch.zeros(self.batch_size, device=_device)
 
         if self.sup:
-            camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
-            camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
-            camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden, is_ortho=True)
+            camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random, is_training=(stage=='train'))
+            camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked, is_training=(stage=='train'))
+            camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden, is_training=(stage=='train'))
         else:
-            camera_random = make_cameras(est_dist_random, est_elev_random, est_azim_random)
-            camera_locked = make_cameras(est_dist_locked, est_elev_locked, est_azim_locked)
-            camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden, is_ortho=True)
+            camera_random = make_cameras(est_dist_random, est_elev_random, est_azim_random, is_training=(stage=='train'))
+            camera_locked = make_cameras(est_dist_locked, est_elev_locked, est_azim_locked, is_training=(stage=='train'))
+            camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden, is_training=(stage=='train'))
 
         if self.stn:
             est_figure_ct_hidden = self.forward_screen(image3d=image3d, cameras=camera_hidden)
