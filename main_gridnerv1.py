@@ -17,7 +17,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 import kornia
 from kornia.augmentation import RandomAffine
 
-from pytorch3d.renderer.cameras import FoVPerspectiveCameras, look_at_view_transform
+from pytorch3d.renderer.cameras import FoVOrthographicCameras, FoVPerspectiveCameras, look_at_view_transform
 from pytorch3d.renderer import NDCMultinomialRaysampler
 
 from diffusers import UNet2DModel
@@ -237,7 +237,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         volumes = torch.cat([volumes_ct, volumes_xr])
         return volumes 
 
-def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor):
+def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor, is_ortho=False):
     assert dist.device == elev.device == azim.device
     _device = dist.device
     R, T = look_at_view_transform(
@@ -245,7 +245,10 @@ def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor):
         elev=elev.float() * 90, 
         azim=azim.float() * 180
     )
-    return FoVPerspectiveCameras(R=R, T=T, fov=36, aspect_ratio=1).to(_device)
+    if not is_ortho:
+        return FoVPerspectiveCameras(R=R, T=T, fov=40, znear=2.0, zfar=6.0).to(_device)
+    else:
+        return FoVOrthographicCameras(R=R, T=T, znear=2.0, zfar=6.0).to(_device)
 
 def torch_distributions_uniform_or_zeros(shape=[1, 1], device=torch.device('cpu')):
     rng = torch.randint(low=0, high=2, size=(1, 1))
@@ -338,7 +341,7 @@ class GridNeRVLightningModule(LightningModule):
 
         self.train_step_outputs = []
         self.validation_step_outputs = []
-        self.loss = nn.MSELoss(reduction="mean")
+        self.loss = nn.SmoothL1Loss(reduction="mean", beta=0.1)
 
     # Spatial transformer network forward function
     def forward_affine(self, x):
@@ -410,11 +413,11 @@ class GridNeRVLightningModule(LightningModule):
         if self.sup:
             camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
             camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
-            camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden)
+            camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden, is_ortho=True)
         else:
             camera_random = make_cameras(est_dist_random, est_elev_random, est_azim_random)
             camera_locked = make_cameras(est_dist_locked, est_elev_locked, est_azim_locked)
-            camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden)
+            camera_hidden = make_cameras(est_dist_hidden, est_elev_hidden, est_azim_hidden, is_ortho=True)
 
         if self.stn:
             est_figure_ct_hidden = self.forward_screen(image3d=image3d, cameras=camera_hidden)
