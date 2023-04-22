@@ -182,8 +182,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             image_width=self.shape,
             image_height=self.shape,
             n_pts_per_ray=self.n_pts_per_ray,  
-            min_depth=2.0,
-            max_depth=6.0,
+            min_depth=8.0,
+            max_depth=12.0,
         )        
 
         
@@ -246,9 +246,9 @@ def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor, is_
         azim=azim.float() * 180
     )
     if is_training:
-        fov = torch.randint(low=30, high=41, size=(1, 1))
+        fov = torch.randint(low=12, high=21, size=(1, 1))
     else:
-        fov = 36
+        fov = 16
     return FoVPerspectiveCameras(R=R, T=T, fov=fov, znear=8.0, zfar=12.0).to(_device)
 
 def torch_distributions_uniform_or_zeros(shape=[1, 1], device=torch.device('cpu')):
