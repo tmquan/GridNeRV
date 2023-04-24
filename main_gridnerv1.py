@@ -248,7 +248,7 @@ def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor, see
     return FoVPerspectiveCameras(R=R, T=T, fov=16, znear=8.0, zfar=12.0).to(_device)
 
 def torch_distributions_uniform_or_zeros(shape=[1, 1], device=torch.device('cpu')):
-    rng = torch.randint(low=0, high=4, size=(1, 1))
+    rng = torch.randint(low=0, high=10, size=(1, 1))
     if rng>0:
         return torch.distributions.uniform.Uniform(-1.0, 1.0).sample(shape).to(device)
     else:
