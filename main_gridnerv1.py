@@ -66,18 +66,19 @@ class GridNeRVFrontToBackFrustumFeaturer(nn.Module):
         return camfeat
 
 class GridNeRVFrontToBackInverseRenderer(nn.Module):
-    def __init__(self, in_channels=3, out_channels=1, shape=256, n_pts_per_ray=256, sh=0, pe=8, backbone="efficientnet-b7"):
+    def __init__(self, in_channels=3, out_channels=1, img_shape=400, vol_shape=256, n_pts_per_ray=256, sh=0, pe=8, backbone="efficientnet-b7"):
         super().__init__()
         self.sh = sh
         self.pe = pe
-        self.shape = shape
+        self.img_shape = img_shape
+        self.vol_shape = vol_shape
         self.n_pts_per_ray = n_pts_per_ray
         assert backbone in backbones.keys()
         if self.pe>0:
             # Generate grid
-            zs = torch.linspace(-1, 1, steps=self.shape)
-            ys = torch.linspace(-1, 1, steps=self.shape)
-            xs = torch.linspace(-1, 1, steps=self.shape)
+            zs = torch.linspace(-1, 1, steps=self.vol_shape)
+            ys = torch.linspace(-1, 1, steps=self.vol_shape)
+            xs = torch.linspace(-1, 1, steps=self.vol_shape)
             z, y, x = torch.meshgrid(zs, ys, xs)
             zyx = torch.stack([z, y, x], dim=-1) # torch.Size([100, 100, 100, 3])
             from nerfstudio.field_components import encodings
@@ -88,14 +89,14 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 in_dim=self.pe, num_frequencies=num_frequencies, min_freq_exp=min_freq_exp, max_freq_exp=max_freq_exp
             )
             pebasis = encoder(zyx.view(-1, 3))
-            pebasis = pebasis.view(self.shape, self.shape, self.shape, -1).permute(3, 0, 1, 2)
+            pebasis = pebasis.view(self.vol_shape, self.vol_shape, self.vol_shape, -1).permute(3, 0, 1, 2)
             self.register_buffer('pebasis', pebasis)
 
         if self.sh > 0:
             # Generate grid
-            zs = torch.linspace(-1, 1, steps=self.shape)
-            ys = torch.linspace(-1, 1, steps=self.shape)
-            xs = torch.linspace(-1, 1, steps=self.shape)
+            zs = torch.linspace(-1, 1, steps=self.vol_shape)
+            ys = torch.linspace(-1, 1, steps=self.vol_shape)
+            xs = torch.linspace(-1, 1, steps=self.vol_shape)
             z, y, x = torch.meshgrid(zs, ys, xs)
             zyx = torch.stack([z, y, x], dim=-1) # torch.Size([100, 100, 100, 3])
             
@@ -103,11 +104,11 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             encoder = encodings.SHEncoding(levels=self.sh)
             assert out_channels == self.sh**2
             shbasis = encoder(zyx.view(-1, 3))
-            shbasis = shbasis.view(self.shape, self.shape, self.shape, -1).permute(3, 0, 1, 2)
+            shbasis = shbasis.view(self.vol_shape, self.vol_shape, self.vol_shape, -1).permute(3, 0, 1, 2)
             self.register_buffer('shbasis', shbasis)
             
         self.clarity_net = UNet2DModel(
-            sample_size=self.shape,  
+            sample_size=self.img_shape,  
             in_channels=1,  
             out_channels=self.n_pts_per_ray,
             layers_per_block=2,  # how many ResNet layers to use per UNet block
@@ -179,8 +180,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         )
 
         self.raysampler = NDCMultinomialRaysampler(  
-            image_width=self.shape,
-            image_height=self.shape,
+            image_width=self.img_shape,
+            image_height=self.img_shape,
             n_pts_per_ray=self.n_pts_per_ray,  
             min_depth=8.0,
             max_depth=12.0,
@@ -188,7 +189,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
 
         
     def forward(self, figures, azim, elev, n_views=2):
-        clarity = self.clarity_net(figures, azim*1000, elev*2000)[0].view(-1, 1, self.n_pts_per_ray, self.shape, self.shape)
+        clarity = self.clarity_net(figures, azim*180, elev*90)[0].view(-1, 1, self.n_pts_per_ray, self.img_shape, self.img_shape)
         
         # Process (resample) the clarity from ray views to ndc
         _device = figures.device
@@ -197,9 +198,9 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         cameras = make_cameras(dist, elev, azim)
         
         # Generate a grid of ndc coordinates that covers the entire ndc volume
-        ndc_z = torch.linspace(-1, 1, steps=self.shape, device=_device)
-        ndc_y = torch.linspace(-1, 1, steps=self.shape, device=_device)
-        ndc_x = torch.linspace(-1, 1, steps=self.shape, device=_device)
+        ndc_z = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        ndc_y = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        ndc_x = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
         ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
         v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ndc_coords) # view to world
         w2c_coords = cameras.transform_points(v2w_coords) # world to ndc
@@ -207,7 +208,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         ray_values = clarity
         ndc_values = F.grid_sample(
             ray_values,
-            w2c_coords.view(-1, self.shape, self.shape, self.shape, 3),
+            w2c_coords.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
             mode='bilinear', 
             padding_mode='zeros', 
             align_corners=True
@@ -265,7 +266,8 @@ class GridNeRVLightningModule(LightningModule):
         self.ckpt = hparams.ckpt
         self.strict = hparams.strict
         
-        self.shape = hparams.shape
+        self.img_shape = hparams.img_shape
+        self.vol_shape = hparams.vol_shape
         self.alpha = hparams.alpha
         self.gamma = hparams.gamma
         self.theta = hparams.theta
@@ -287,8 +289,8 @@ class GridNeRVLightningModule(LightningModule):
         self.save_hyperparameters()
 
         self.fwd_renderer = DirectVolumeFrontToBackRenderer(
-            image_width=self.shape, 
-            image_height=self.shape, 
+            image_width=self.img_shape, 
+            image_height=self.img_shape, 
             n_pts_per_ray=self.n_pts_per_ray, 
             min_depth=8.0, 
             max_depth=12.0, 
@@ -298,7 +300,8 @@ class GridNeRVLightningModule(LightningModule):
             in_channels=2, 
             # out_channels=9 if self.sh==2 else 16 if self.sh==3 else 1, 
             out_channels=self.sh**2, 
-            shape=self.shape, 
+            vol_shape=self.vol_shape, 
+            img_shape=self.img_shape, 
             sh=self.sh, 
             pe=self.pe,
             backbone=self.backbone,
@@ -503,17 +506,20 @@ class GridNeRVLightningModule(LightningModule):
 
         if batch_idx==0:
             viz2d = torch.cat([
-                        torch.cat([image3d[..., self.shape//2, :], 
-                                   est_figure_ct_random,
+                        torch.cat([est_figure_ct_random,
                                    est_figure_ct_locked,
+                                   image2d, 
                                    ], dim=-2).transpose(2, 3),
-                        torch.cat([est_volume_ct_locked[..., self.shape//2, :],
-                                   rec_figure_ct_random,
+                        torch.cat([rec_figure_ct_random,
                                    rec_figure_ct_locked,
-                                   ], dim=-2).transpose(2, 3),
-                        torch.cat([image2d, 
-                                   est_volume_xr_hidden[..., self.shape//2, :],
                                    est_figure_xr_hidden,
+                                   ], dim=-2).transpose(2, 3),
+                        
+                    ], dim=-2)
+            viz3d = torch.cat([
+                        torch.cat([image3d[..., self.vol_shape//2, :], 
+                                   est_volume_ct_locked[..., self.vol_shape//2, :],
+                                   est_volume_xr_hidden[..., self.vol_shape//2, :],
                                    ], dim=-2).transpose(2, 3),
                     ], dim=-2)
             if self.stn:
@@ -534,9 +540,11 @@ class GridNeRVLightningModule(LightningModule):
                                     est_figure_xr_hidden,
                                     ], dim=-2).transpose(2, 3),
                         ], dim=-2)
-            grid = torchvision.utils.make_grid(viz2d, normalize=False, scale_each=False, nrow=1, padding=0)
+            grid2d = torchvision.utils.make_grid(viz2d, normalize=False, scale_each=False, nrow=1, padding=0)
+            grid3d = torchvision.utils.make_grid(viz3d, normalize=False, scale_each=False, nrow=1, padding=0)
             tensorboard = self.logger.experiment
-            tensorboard.add_image(f'{stage}_samples', grid.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
+            tensorboard.add_image(f'{stage}_2d_samples', grid2d.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
+            tensorboard.add_image(f'{stage}_3d_samples', grid3d.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
         
 
         if not self.cam and not self.gan:
@@ -619,7 +627,8 @@ if __name__ == "__main__":
     # Model arguments
     parser.add_argument("--n_pts_per_ray", type=int, default=512, help="Sampling points per ray")
     parser.add_argument("--batch_size", type=int, default=1, help="size of the batches")
-    parser.add_argument("--shape", type=int, default=256, help="spatial size of the tensor")
+    parser.add_argument("--img_shape", type=int, default=400, help="spatial size of the tensor")
+    parser.add_argument("--vol_shape", type=int, default=256, help="spatial size of the tensor")
     parser.add_argument("--epochs", type=int, default=301, help="number of epochs")
     parser.add_argument("--train_samples", type=int, default=1000, help="training samples")
     parser.add_argument("--val_samples", type=int, default=400, help="validation samples")
@@ -790,8 +799,8 @@ if __name__ == "__main__":
         val_samples=hparams.val_samples,
         test_samples=hparams.test_samples,
         batch_size=hparams.batch_size,
-        img_shape=hparams.shape,
-        vol_shape=hparams.shape
+        img_shape=hparams.img_shape,
+        vol_shape=hparams.vol_shape
     )
     datamodule.setup()
 
