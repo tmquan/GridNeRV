@@ -543,8 +543,12 @@ class GridNeRVLightningModule(LightningModule):
             grid2d = torchvision.utils.make_grid(viz2d, normalize=False, scale_each=False, nrow=1, padding=0)
             grid3d = torchvision.utils.make_grid(viz3d, normalize=False, scale_each=False, nrow=1, padding=0)
             tensorboard = self.logger.experiment
-            tensorboard.add_image(f'{stage}_2d_samples', grid2d.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
-            tensorboard.add_image(f'{stage}_3d_samples', grid3d.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
+            if self.img_shape==self.vol_shape:
+                grid = torch.cat([grid2d, grid3d], dim=-2)
+                tensorboard.add_image(f'{stage}_samples', grid.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)    
+            else:
+                tensorboard.add_image(f'{stage}_2d_samples', grid2d.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
+                tensorboard.add_image(f'{stage}_3d_samples', grid3d.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
         
 
         if not self.cam and not self.gan:
@@ -625,9 +629,9 @@ if __name__ == "__main__":
     parser.add_argument("--devices", default=None)
     
     # Model arguments
-    parser.add_argument("--n_pts_per_ray", type=int, default=512, help="Sampling points per ray")
+    parser.add_argument("--n_pts_per_ray", type=int, default=400, help="Sampling points per ray")
     parser.add_argument("--batch_size", type=int, default=1, help="size of the batches")
-    parser.add_argument("--img_shape", type=int, default=400, help="spatial size of the tensor")
+    parser.add_argument("--img_shape", type=int, default=256, help="spatial size of the tensor")
     parser.add_argument("--vol_shape", type=int, default=256, help="spatial size of the tensor")
     parser.add_argument("--epochs", type=int, default=301, help="number of epochs")
     parser.add_argument("--train_samples", type=int, default=1000, help="training samples")
@@ -651,7 +655,7 @@ if __name__ == "__main__":
     parser.add_argument("--lambda_gp", type=float, default=10, help="gradient penalty")
     parser.add_argument("--clamp_val", type=float, default=.1, help="gradient discrim clamp value")
     
-    parser.add_argument("--lr", type=float, default=1e-4, help="adam: learning rate")
+    parser.add_argument("--lr", type=float, default=1e-3, help="adam: learning rate")
     parser.add_argument("--ckpt", type=str, default=None, help="path to checkpoint")
     parser.add_argument("--logsdir", type=str, default='logs', help="logging directory")
     parser.add_argument("--datadir", type=str, default='data', help="data directory")
