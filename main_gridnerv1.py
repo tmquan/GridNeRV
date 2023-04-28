@@ -233,6 +233,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         else:
             shcomps = shcoeff 
         volumes = shcomps
+        volumes = torch.add(volumes, clarity)
         volumes_ct, volumes_xr = torch.split(volumes, 1)
         volumes_ct = volumes_ct.repeat(n_views, 1, 1, 1, 1)
         volumes = torch.cat([volumes_ct, volumes_xr])
@@ -455,9 +456,9 @@ class GridNeRVLightningModule(LightningModule):
         est_figure_xr_hidden = self.forward_screen(image3d=est_volume_xr_hidden, cameras=camera_hidden)
 
         # Perform Post activation like DVGO      
-        est_volume_ct_random = est_volume_ct_random.sum(dim=1, keepdim=True)
-        est_volume_ct_locked = est_volume_ct_locked.sum(dim=1, keepdim=True)
-        est_volume_xr_hidden = est_volume_xr_hidden.sum(dim=1, keepdim=True)
+        est_volume_ct_random = est_volume_ct_random.mean(dim=1, keepdim=True)
+        est_volume_ct_locked = est_volume_ct_locked.mean(dim=1, keepdim=True)
+        est_volume_xr_hidden = est_volume_xr_hidden.mean(dim=1, keepdim=True)
 
         # Compute the loss
         # Per-pixel_loss
