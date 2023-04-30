@@ -474,6 +474,7 @@ class GridNeRVLightningModule(LightningModule):
 
         self.log(f'{stage}_view_loss', view_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
         c_loss = self.gamma*im2d_loss + self.theta*view_loss + self.omega*view_cond
+        # c_loss = self.theta*view_loss + self.omega*view_cond
 
         if batch_idx==0:
             viz2d = torch.cat([
@@ -505,20 +506,24 @@ class GridNeRVLightningModule(LightningModule):
                 tensorboard.add_image(f'{stage}_3d_samples', grid3d.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
         
         if stage=="train":
-            optimizer_g, optimizer_d = self.optimizers()
-            # generator loss
-            self.toggle_optimizer(optimizer_g)
-            self.manual_backward(p_loss)
-            optimizer_g.step()
-            optimizer_g.zero_grad()
-            self.untoggle_optimizer(optimizer_g)
+            # optimizer_g, optimizer_d = self.optimizers()
+            # # generator loss
+            # self.toggle_optimizer(optimizer_g)
+            # self.manual_backward(p_loss)
+            # optimizer_g.step()
+            # optimizer_g.zero_grad()
+            # self.untoggle_optimizer(optimizer_g)
             
-            # discriminator
-            self.toggle_optimizer(optimizer_d)
-            self.manual_backward(c_loss)
-            optimizer_d.step()
-            optimizer_d.zero_grad()
-            self.untoggle_optimizer(optimizer_d)
+            # # discriminator
+            # self.toggle_optimizer(optimizer_d)
+            # self.manual_backward(c_loss)
+            # optimizer_d.step()
+            # optimizer_d.zero_grad()
+            # self.untoggle_optimizer(optimizer_d)
+            if optimizer_idx==0:
+                return p_loss
+            if optimizer_idx==1:
+                return c_loss
         else:        
             return p_loss + c_loss
         
