@@ -29,7 +29,7 @@ from lightning.pytorch.callbacks import StochasticWeightAveraging
 from lightning.pytorch.loggers import TensorBoardLogger
 from argparse import ArgumentParser
 from typing import Optional, Union, List
-from monai.networks.nets import Unet, EfficientNetBN
+from monai.networks.nets import Unet, EfficientNetBN, Regressor
 from monai.networks.layers.factories import Norm
 
 from datamodule import UnpairedDataModule
@@ -49,16 +49,24 @@ backbones = {
 }
 
 class GridNeRVFrontToBackFrustumFeaturer(nn.Module):
-    def __init__(self, in_channels=1, out_channels=1, backbone="efficientnet-b7"):
+    def __init__(self, in_channels=1, shape=256, out_channels=1, backbone="efficientnet-b7"):
         super().__init__()
         assert backbone in backbones.keys()
-        self.model = EfficientNetBN(
-            model_name=backbone, #(24, 32, 56, 160, 448)
-            pretrained=True, 
-            spatial_dims=2,
-            in_channels=in_channels,
-            num_classes=out_channels,
-            adv_prop=True,
+        # self.model = EfficientNetBN(
+        #     model_name=backbone, #(24, 32, 56, 160, 448)
+        #     pretrained=True, 
+        #     spatial_dims=2,
+        #     in_channels=in_channels,
+        #     num_classes=out_channels,
+        #     adv_prop=True,
+        # )
+        self.model = Regressor(
+            in_shape=(in_channels, shape, shape), 
+            out_shape=(out_channels), 
+            channels=backbones[backbone], 
+            strides=(2, 2, 2, 2, 2), 
+            norm=Norm.BATCH,
+            # dropout=0.2,
         )
 
     def forward(self, figures):
@@ -143,7 +151,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ),
         )
 
@@ -159,7 +167,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ),
         )
 
@@ -175,7 +183,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 up_kernel_size=3,
                 act=("LeakyReLU", {"inplace": True}),
                 norm=Norm.BATCH,
-                dropout=0.2,
+                # dropout=0.2,
             ), 
         )
 
@@ -233,7 +241,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         else:
             shcomps = shcoeff 
         volumes = shcomps
-        volumes = torch.add(volumes, clarity)
+        # volumes = torch.add(volumes, clarity)
         volumes_ct, volumes_xr = torch.split(volumes, 1)
         volumes_ct = volumes_ct.repeat(n_views, 1, 1, 1, 1)
         volumes = torch.cat([volumes_ct, volumes_xr])
@@ -335,10 +343,12 @@ class GridNeRVLightningModule(LightningModule):
                 out_channels=2, 
                 backbone=self.backbone,
             )
-            self.cam_settings.model._fc.weight.data.zero_()
-            self.cam_settings.model._fc.bias.data.zero_()
-            # self.cam_settings.model._fc.weight.data.copy_(torch.tensor([0.1, 0.1], dtype=torch.float))
-            # self.cam_settings.model._fc.bias.data.copy_(torch.tensor([0.1, 0.1], dtype=torch.float))
+            # torch.nn.init.trunc_normal_(self.cam_settings.model._fc.weight.data, mean=0.0, std=0.05, a=-0.1, b=0.1)
+            # torch.nn.init.trunc_normal_(self.cam_settings.model._fc.bias.data, mean=0.0, std=0.05, a=-0.1, b=0.1)
+            # self.cam_settings.model._fc.weight.data.random_()
+            # self.cam_settings.model._fc.bias.data.random_()
+            # self.cam_settings.model._fc.weight.data.copy_(torch.tensor([0.2, 0.2], dtype=torch.float))
+            # # self.cam_settings.model._fc.bias.data.copy_(torch.tensor([0.2, 0.2], dtype=torch.float))
 
         self.train_step_outputs = []
         self.validation_step_outputs = []
@@ -456,9 +466,9 @@ class GridNeRVLightningModule(LightningModule):
         est_figure_xr_hidden = self.forward_screen(image3d=est_volume_xr_hidden, cameras=camera_hidden)
 
         # Perform Post activation like DVGO      
-        est_volume_ct_random = est_volume_ct_random.mean(dim=1, keepdim=True)
-        est_volume_ct_locked = est_volume_ct_locked.mean(dim=1, keepdim=True)
-        est_volume_xr_hidden = est_volume_xr_hidden.mean(dim=1, keepdim=True)
+        est_volume_ct_random = est_volume_ct_random.sum(dim=1, keepdim=True)
+        est_volume_ct_locked = est_volume_ct_locked.sum(dim=1, keepdim=True)
+        est_volume_xr_hidden = est_volume_xr_hidden.sum(dim=1, keepdim=True)
 
         # Compute the loss
         # Per-pixel_loss
