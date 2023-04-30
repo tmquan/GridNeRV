@@ -529,8 +529,11 @@ class GridNeRVLightningModule(LightningModule):
                 return p_loss
             if optimizer_idx==1:
                 return c_loss
-        else:        
-            return p_loss + c_loss
+        else:   
+            if self.cam:     
+                return p_loss + c_loss
+            else:
+                return p_loss
         
     def training_step(self, batch, batch_idx, optimizer_idx=None):
         self._common_step(batch, batch_idx, optimizer_idx, stage='train')
