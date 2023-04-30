@@ -272,6 +272,8 @@ class GridNeRVLightningModule(LightningModule):
         self.gan = hparams.gan
         self.cam = hparams.cam
         self.sup = hparams.sup
+        self.one = hparams.one
+        self.two = hparams.two
         self.ckpt = hparams.ckpt
         self.strict = hparams.strict
         
@@ -330,7 +332,10 @@ class GridNeRVLightningModule(LightningModule):
                 out_channels=2, 
                 backbone=self.backbone,
             )
-        
+            torch.nn.init.trunc_normal_(self.cam_settings.model._fc.weight.data, mean=0.0, std=0.05, a=-0.05, b=0.05)
+            torch.nn.init.trunc_normal_(self.cam_settings.model._fc.bias.data, mean=0.0, std=0.05, a=-0.05, b=0.05)
+            # self.cam_settings.model._fc.weight.data.zero_()
+            # self.cam_settings.model._fc.bias.data.zero_()
         self.train_step_outputs = []
         self.validation_step_outputs = []
         self.automatic_optimization = False # For 2 optims
@@ -504,7 +509,7 @@ class GridNeRVLightningModule(LightningModule):
                 tensorboard.add_image(f'{stage}_2d_samples', grid2d.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
                 tensorboard.add_image(f'{stage}_3d_samples', grid3d.clamp(0., 1.), self.current_epoch*self.batch_size + batch_idx)
         
-        if stage=="train":
+        if stage=="train" and self.two:
             # optimizer_g, optimizer_d = self.optimizers()
             # # generator loss
             # self.toggle_optimizer(optimizer_g)
@@ -534,16 +539,22 @@ class GridNeRVLightningModule(LightningModule):
             
     def configure_optimizers(self):
         # If --gan is set, optimize Unprojector, Camera as generator, and Discriminator with 2 optimizers
-        optimizer_g = torch.optim.AdamW(self.inv_renderer.parameters(), lr=1*self.lr, betas=(0.5, 0.999))
-        optimizer_d = torch.optim.AdamW(self.cam_settings.parameters(), lr=4*self.lr, betas=(0.5, 0.999))
-        scheduler_g = torch.optim.lr_scheduler.MultiStepLR(optimizer_g, milestones=[100, 200], gamma=0.1)
-        scheduler_d = torch.optim.lr_scheduler.MultiStepLR(optimizer_d, milestones=[100, 200], gamma=0.1)
-        return [optimizer_g, optimizer_d], [scheduler_g, scheduler_d] 
-        
-        # optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
-        # scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
-        # return [optimizer], [scheduler]
-
+        # optimizer_g = torch.optim.AdamW(self.inv_renderer.parameters(), lr=1*self.lr, betas=(0.5, 0.999))
+        # optimizer_d = torch.optim.AdamW(self.cam_settings.parameters(), lr=4*self.lr, betas=(0.5, 0.999))
+        # scheduler_g = torch.optim.lr_scheduler.MultiStepLR(optimizer_g, milestones=[100, 200], gamma=0.1)
+        # scheduler_d = torch.optim.lr_scheduler.MultiStepLR(optimizer_d, milestones=[100, 200], gamma=0.1)
+        # return [optimizer_g, optimizer_d], [scheduler_g, scheduler_d] 
+        if self.one:
+            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
+            return [optimizer], [scheduler]
+        elif self.two:
+            optimizer_g = torch.optim.AdamW(self.inv_renderer.parameters(), lr=1*self.lr, betas=(0.5, 0.999))
+            optimizer_d = torch.optim.AdamW(self.cam_settings.parameters(), lr=4*self.lr, betas=(0.5, 0.999))
+            scheduler_g = torch.optim.lr_scheduler.MultiStepLR(optimizer_g, milestones=[100, 200], gamma=0.1)
+            scheduler_d = torch.optim.lr_scheduler.MultiStepLR(optimizer_d, milestones=[100, 200], gamma=0.1)
+            return [optimizer_g, optimizer_d], [scheduler_g, scheduler_d]
+         
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--conda_env", type=str, default="Unet")
@@ -569,6 +580,8 @@ if __name__ == "__main__":
     parser.add_argument("--cam", action="store_true", help="train cam locked or hidden")
     parser.add_argument("--sup", action="store_true", help="train cam ct or not")
     parser.add_argument("--amp", action="store_true", help="train with mixed precision or not")
+    parser.add_argument("--one", action="store_true", help="train with 1 optim")
+    parser.add_argument("--two", action="store_true", help="train with 2 optim")
     parser.add_argument("--strict", action="store_true", help="checkpoint loading")
     
     parser.add_argument("--alpha", type=float, default=1., help="vol loss")
