@@ -67,7 +67,7 @@ class GridNeRVFrontToBackFrustumFeaturer(nn.Module):
         #     channels=backbones[backbone], 
         #     strides=(2, 2, 2, 2, 2), 
         #     norm=Norm.BATCH,
-        #     # dropout=0.2,
+            # dropout=0.2,
         # )
 
     def forward(self, figures):
@@ -347,7 +347,7 @@ class GridNeRVLightningModule(LightningModule):
             pe=self.pe,
             backbone=self.backbone,
         )
-        init_weights(self.inv_renderer)
+        # init_weights(self.inv_renderer)
         if self.ckpt:
             # load the checkpoint
             checkpoint = torch.load(self.ckpt, map_location=torch.device('cpu'))["state_dict"]
@@ -376,7 +376,7 @@ class GridNeRVLightningModule(LightningModule):
                 out_channels=2, 
                 backbone=self.backbone,
             )
-            init_weights(self.cam_settings)
+            # init_weights(self.cam_settings)
             torch.nn.init.trunc_normal_(self.cam_settings.model._fc.weight.data, mean=0.0, std=0.05, a=-0.05, b=0.05)
             torch.nn.init.trunc_normal_(self.cam_settings.model._fc.bias.data, mean=0.0, std=0.05, a=-0.05, b=0.05)
             # self.cam_settings.model._fc.weight.data.random_()
