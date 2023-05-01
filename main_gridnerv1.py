@@ -149,9 +149,9 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
-                # act=("LeakyReLU", {"inplace": True}),
-                # norm=Norm.BATCH,
-                # dropout=0.2,
+                act=("LeakyReLU", {"inplace": True}),
+                norm=Norm.BATCH,
+                dropout=0.2,
             ),
         )
 
@@ -165,9 +165,9 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
-                # act=("LeakyReLU", {"inplace": True}),
-                # norm=Norm.BATCH,
-                # dropout=0.2,
+                act=("LeakyReLU", {"inplace": True}),
+                norm=Norm.BATCH,
+                dropout=0.2,
             ),
         )
 
@@ -181,9 +181,9 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
-                # act=("LeakyReLU", {"inplace": True}),
-                # norm=Norm.BATCH,
-                # dropout=0.2,
+                act=("LeakyReLU", {"inplace": True}),
+                norm=Norm.BATCH,
+                dropout=0.2,
             ), 
         )
 
@@ -695,7 +695,7 @@ if __name__ == "__main__":
 
     # Logger
     tensorboard_logger = TensorBoardLogger(
-        save_dir=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_stn{int(hparams.stn)}", 
+        save_dir=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_sup{int(hparams.sup)}", 
         log_graph=True
     )
     swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
