@@ -110,8 +110,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             zyx = torch.stack([z, y, x], dim=-1) # torch.Size([100, 100, 100, 3])
             
             from nerfstudio.field_components import encodings
-            encoder = encodings.SHEncoding(levels=self.sh)
-            assert out_channels == self.sh**2
+            encoder = encodings.SHEncoding(levels=self.sh+1)
+            assert out_channels == (self.sh+1)**2 
             shbasis = encoder(zyx.view(-1, 3))
             shbasis = shbasis.view(self.vol_shape, self.vol_shape, self.vol_shape, -1).permute(3, 0, 1, 2)
             self.register_buffer('shbasis', shbasis)
@@ -235,6 +235,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         else:
             density = self.density_net(torch.cat([clarity], dim=1))
             mixture = self.mixture_net(torch.cat([clarity, density], dim=1))
+            # print(clarity.shape, density.shape, mixture.shape)
             shcoeff = self.refiner_net(torch.cat([clarity, density, mixture], dim=1))
 
         if self.sh > 0:
@@ -246,7 +247,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         volumes_ct, volumes_xr = torch.split(volumes, 1)
         volumes_ct = volumes_ct.repeat(n_views, 1, 1, 1, 1)
         volumes = torch.cat([volumes_ct, volumes_xr])
-        return volumes 
+        return volumes * 0.5 + 0.5
 
 def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor, seed=None):
     assert dist.device == elev.device == azim.device
@@ -340,7 +341,7 @@ class GridNeRVLightningModule(LightningModule):
         self.inv_renderer = GridNeRVFrontToBackInverseRenderer(
             in_channels=2, 
             # out_channels=9 if self.sh==2 else 16 if self.sh==3 else 1, 
-            out_channels=self.sh**2, 
+            out_channels=(self.sh+1)**2, 
             vol_shape=self.vol_shape, 
             img_shape=self.img_shape, 
             sh=self.sh, 
