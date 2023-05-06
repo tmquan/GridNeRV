@@ -247,7 +247,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         volumes_ct, volumes_xr = torch.split(volumes, 1)
         volumes_ct = volumes_ct.repeat(n_views, 1, 1, 1, 1)
         volumes = torch.cat([volumes_ct, volumes_xr])
-        return volumes * 0.5 + 0.5
+        return volumes
 
 def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor, seed=None):
     assert dist.device == elev.device == azim.device
@@ -402,7 +402,7 @@ class GridNeRVLightningModule(LightningModule):
         return self.fwd_renderer(image3d, cameras) 
 
     def forward_volume(self, image2d, azim, elev, n_views=2):      
-        return self.inv_renderer(image2d * 2.0 - 1.0, azim.squeeze(), elev.squeeze(), n_views) 
+        return self.inv_renderer(image2d * 2.0 - 1.0, azim.squeeze(), elev.squeeze(), n_views) * 0.5 + 0.5
 
     def forward_camera(self, image2d):
         return self.cam_settings(image2d * 2.0 - 1.0)
