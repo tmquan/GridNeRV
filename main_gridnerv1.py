@@ -14,6 +14,7 @@ torch.set_float32_matmul_precision('medium')
 torch.cuda.empty_cache()
 torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 torch.multiprocessing.set_sharing_strategy('file_system')
+from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 import kornia
 from kornia.augmentation import RandomAffine
@@ -110,8 +111,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             zyx = torch.stack([z, y, x], dim=-1) # torch.Size([100, 100, 100, 3])
             
             from nerfstudio.field_components import encodings
-            encoder = encodings.SHEncoding(levels=self.sh+1)
-            assert out_channels == (self.sh+1)**2 
+            encoder = encodings.SHEncoding(self.sh>0)
+            assert out_channels == self.sh**2 if self.sh>0 else 1
             shbasis = encoder(zyx.view(-1, 3))
             shbasis = shbasis.view(self.vol_shape, self.vol_shape, self.vol_shape, -1).permute(3, 0, 1, 2)
             self.register_buffer('shbasis', shbasis)
@@ -198,7 +199,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
 
         
     def forward(self, figures, azim, elev, n_views=2):
-        clarity = self.clarity_net(figures, azim*90, elev*180)[0].view(-1, 1, self.n_pts_per_ray, self.img_shape, self.img_shape)
+        clarity = self.clarity_net(figures, azim*900, elev*1800)[0].view(-1, 1, self.n_pts_per_ray, self.img_shape, self.img_shape)
         
         # Process (resample) the clarity from ray views to ndc
         _device = figures.device
@@ -296,7 +297,6 @@ def init_weights(net, init_type='kaiming', init_gain=0.02):
     # print('initialize network with %s' % init_type)
     net.apply(init_func)  # apply the initialization function <init_func>
     
-                
 class GridNeRVLightningModule(LightningModule):
     def __init__(self, hparams, **kwargs):
         super().__init__()
@@ -312,6 +312,7 @@ class GridNeRVLightningModule(LightningModule):
         self.vol_shape = hparams.vol_shape
         self.alpha = hparams.alpha
         self.gamma = hparams.gamma
+        self.delta = hparams.delta
         self.theta = hparams.theta
         self.omega = hparams.omega
         self.lambda_gp = hparams.lambda_gp
@@ -340,8 +341,7 @@ class GridNeRVLightningModule(LightningModule):
         
         self.inv_renderer = GridNeRVFrontToBackInverseRenderer(
             in_channels=2, 
-            # out_channels=9 if self.sh==2 else 16 if self.sh==3 else 1, 
-            out_channels=(self.sh+1)**2, 
+            out_channels=self.sh**2 if self.sh>0 else 1, 
             vol_shape=self.vol_shape, 
             img_shape=self.img_shape, 
             sh=self.sh, 
@@ -389,7 +389,8 @@ class GridNeRVLightningModule(LightningModule):
         self.validation_step_outputs = []
         # self.loss = nn.SmoothL1Loss(reduction="mean", beta=0.1)
         self.loss = nn.L1Loss(reduction="mean")
-
+        self.pips = LearnedPerceptualImagePatchSimilarity(net_type='vgg', normalize=True)
+        
     # Spatial transformer network forward function
     def forward_affine(self, x):
         theta = self.stn_modifier(x * 2.0 - 1.0)
@@ -402,7 +403,7 @@ class GridNeRVLightningModule(LightningModule):
         return self.fwd_renderer(image3d, cameras) 
 
     def forward_volume(self, image2d, azim, elev, n_views=2):      
-        return self.inv_renderer(image2d * 2.0 - 1.0, azim.squeeze(), elev.squeeze(), n_views) * 0.5 + 0.5
+        return self.inv_renderer(image2d * 2.0 - 1.0, azim.squeeze(), elev.squeeze(), n_views) #* 0.5 + 0.5
 
     def forward_camera(self, image2d):
         return self.cam_settings(image2d * 2.0 - 1.0)
@@ -526,10 +527,16 @@ class GridNeRVLightningModule(LightningModule):
         im3d_loss_ct = im3d_loss_ct_random + im3d_loss_ct_locked
         im3d_loss = im3d_loss_ct
         
+        pips_loss_ct_random = self.pips(est_figure_ct_random.repeat(1,3,1,1), rec_figure_ct_random.repeat(1,3,1,1)) 
+        pips_loss_ct_locked = self.pips(est_figure_ct_locked.repeat(1,3,1,1), rec_figure_ct_locked.repeat(1,3,1,1)) 
+        pips_loss_xr_hidden = self.pips(src_figure_xr_hidden.repeat(1,3,1,1), est_figure_xr_hidden.repeat(1,3,1,1)) 
+        pips_loss = pips_loss_ct_random + pips_loss_ct_locked + pips_loss_xr_hidden
+        
         self.log(f'{stage}_im2d_loss', im2d_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
         self.log(f'{stage}_im3d_loss', im3d_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
+        self.log(f'{stage}_pips_loss', pips_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
 
-        p_loss = self.gamma*im2d_loss + self.alpha*im3d_loss
+        p_loss = self.gamma*im2d_loss + self.alpha*im3d_loss + self.delta*pips_loss
         
         if self.cam:
             view_loss_ct_random = self.loss(torch.cat([src_azim_random, src_elev_random]), 
@@ -696,6 +703,7 @@ if __name__ == "__main__":
     
     parser.add_argument("--alpha", type=float, default=1., help="vol loss")
     parser.add_argument("--gamma", type=float, default=1., help="img loss")
+    parser.add_argument("--delta", type=float, default=1., help="vgg loss")
     parser.add_argument("--theta", type=float, default=1., help="cam loss")
     parser.add_argument("--omega", type=float, default=1., help="cam cond")
     parser.add_argument("--lambda_gp", type=float, default=10, help="gradient penalty")
