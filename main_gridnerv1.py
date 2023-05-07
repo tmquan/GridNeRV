@@ -151,8 +151,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
-                act=("LeakyReLU", {"inplace": True}),
-                norm=Norm.BATCH,
+                # act=("LeakyReLU", {"inplace": True}),
+                # norm=Norm.BATCH,
                 dropout=0.2,
             ),
         )
@@ -167,8 +167,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
-                act=("LeakyReLU", {"inplace": True}),
-                norm=Norm.BATCH,
+                # act=("LeakyReLU", {"inplace": True}),
+                # norm=Norm.BATCH,
                 dropout=0.2,
             ),
         )
@@ -183,8 +183,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
-                act=("LeakyReLU", {"inplace": True}),
-                norm=Norm.BATCH,
+                # act=("LeakyReLU", {"inplace": True}),
+                # norm=Norm.BATCH,
                 dropout=0.2,
             ), 
         )
@@ -348,7 +348,7 @@ class GridNeRVLightningModule(LightningModule):
             pe=self.pe,
             backbone=self.backbone,
         )
-        # init_weights(self.inv_renderer)
+        init_weights(self.inv_renderer)
         if self.ckpt:
             # load the checkpoint
             checkpoint = torch.load(self.ckpt, map_location=torch.device('cpu'))["state_dict"]
@@ -377,7 +377,7 @@ class GridNeRVLightningModule(LightningModule):
                 out_channels=2, 
                 backbone=self.backbone,
             )
-            # init_weights(self.cam_settings)
+            init_weights(self.cam_settings)
             torch.nn.init.trunc_normal_(self.cam_settings.model._fc.weight.data, mean=0.0, std=0.05, a=-0.05, b=0.05)
             torch.nn.init.trunc_normal_(self.cam_settings.model._fc.bias.data, mean=0.0, std=0.05, a=-0.05, b=0.05)
             # self.cam_settings.model._fc.weight.data.random_()
@@ -389,7 +389,7 @@ class GridNeRVLightningModule(LightningModule):
         self.validation_step_outputs = []
         # self.loss = nn.SmoothL1Loss(reduction="mean", beta=0.1)
         self.loss = nn.L1Loss(reduction="mean")
-        self.pips = LearnedPerceptualImagePatchSimilarity(net_type='vgg', normalize=True)
+        # self.pips = LearnedPerceptualImagePatchSimilarity(net_type='vgg', normalize=True)
         
     # Spatial transformer network forward function
     def forward_affine(self, x):
@@ -403,7 +403,7 @@ class GridNeRVLightningModule(LightningModule):
         return self.fwd_renderer(image3d, cameras) 
 
     def forward_volume(self, image2d, azim, elev, n_views=2):      
-        return self.inv_renderer(image2d * 2.0 - 1.0, azim.squeeze(), elev.squeeze(), n_views) #* 0.5 + 0.5
+        return self.inv_renderer(image2d * 2.0 - 1.0, azim.squeeze(1), elev.squeeze(1), n_views) #* 0.5 + 0.5
 
     def forward_camera(self, image2d):
         return self.cam_settings(image2d * 2.0 - 1.0)
@@ -527,16 +527,16 @@ class GridNeRVLightningModule(LightningModule):
         im3d_loss_ct = im3d_loss_ct_random + im3d_loss_ct_locked
         im3d_loss = im3d_loss_ct
         
-        pips_loss_ct_random = self.pips(est_figure_ct_random.repeat(1,3,1,1), rec_figure_ct_random.repeat(1,3,1,1)) 
-        pips_loss_ct_locked = self.pips(est_figure_ct_locked.repeat(1,3,1,1), rec_figure_ct_locked.repeat(1,3,1,1)) 
-        pips_loss_xr_hidden = self.pips(src_figure_xr_hidden.repeat(1,3,1,1), est_figure_xr_hidden.repeat(1,3,1,1)) 
-        pips_loss = pips_loss_ct_random + pips_loss_ct_locked + pips_loss_xr_hidden
+        # pips_loss_ct_random = self.pips(est_figure_ct_random.repeat(1,3,1,1), rec_figure_ct_random.repeat(1,3,1,1)) 
+        # pips_loss_ct_locked = self.pips(est_figure_ct_locked.repeat(1,3,1,1), rec_figure_ct_locked.repeat(1,3,1,1)) 
+        # pips_loss_xr_hidden = self.pips(src_figure_xr_hidden.repeat(1,3,1,1), est_figure_xr_hidden.repeat(1,3,1,1)) 
+        # pips_loss = pips_loss_ct_random + pips_loss_ct_locked + pips_loss_xr_hidden
         
         self.log(f'{stage}_im2d_loss', im2d_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
         self.log(f'{stage}_im3d_loss', im3d_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
-        self.log(f'{stage}_pips_loss', pips_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
+        # self.log(f'{stage}_pips_loss', pips_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
 
-        p_loss = self.gamma*im2d_loss + self.alpha*im3d_loss + self.delta*pips_loss
+        p_loss = self.gamma*im2d_loss + self.alpha*im3d_loss #+ self.delta*pips_loss
         
         if self.cam:
             view_loss_ct_random = self.loss(torch.cat([src_azim_random, src_elev_random]), 
