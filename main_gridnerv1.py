@@ -218,7 +218,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ndc_coords) # view to world
         w2c_coords = cameras.transform_points(v2w_coords) # world to ndc
         
-        ray_values = clarity
+        ray_values = torch.add(figures.unsqueeze(1), clarity)
+        # ray_values = clarity
         ndc_values = F.grid_sample(
             ray_values,
             w2c_coords.view(B, self.vol_shape, self.vol_shape, self.vol_shape, 3),
@@ -247,7 +248,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         else:
             shcomps = shcoeff 
         volumes = shcomps
-        # volumes = torch.add(volumes, clarity)
+        volumes = torch.add(volumes, clarity)
         volumes_ct, volumes_xr = torch.split(volumes, 1)
         volumes_ct = volumes_ct.repeat(n_views, 1, 1, 1, 1)
         volumes = torch.cat([volumes_ct, volumes_xr])
