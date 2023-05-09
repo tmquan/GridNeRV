@@ -94,9 +94,12 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             from nerfstudio.field_components import encodings
             num_frequencies = self.pe
             min_freq_exp = 0
-            max_freq_exp = 3
+            max_freq_exp = 8
             encoder = encodings.NeRFEncoding(
-                in_dim=self.pe, num_frequencies=num_frequencies, min_freq_exp=min_freq_exp, max_freq_exp=max_freq_exp
+                in_dim=self.pe, 
+                num_frequencies=num_frequencies, 
+                min_freq_exp=min_freq_exp, 
+                max_freq_exp=max_freq_exp
             )
             pebasis = encoder(zyx.view(-1, 3))
             pebasis = pebasis.view(self.vol_shape, self.vol_shape, self.vol_shape, -1).permute(3, 0, 1, 2)
@@ -111,7 +114,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             zyx = torch.stack([z, y, x], dim=-1) # torch.Size([100, 100, 100, 3])
             
             from nerfstudio.field_components import encodings
-            encoder = encodings.SHEncoding(self.sh>0)
+            encoder = encodings.SHEncoding(self.sh)
             assert out_channels == self.sh**2 if self.sh>0 else 1
             shbasis = encoder(zyx.view(-1, 3))
             shbasis = shbasis.view(self.vol_shape, self.vol_shape, self.vol_shape, -1).permute(3, 0, 1, 2)
@@ -151,8 +154,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
-                # act=("LeakyReLU", {"inplace": True}),
-                # norm=Norm.BATCH,
+                act=("LeakyReLU", {"inplace": True}),
+                norm=Norm.BATCH,
                 dropout=0.2,
             ),
         )
@@ -167,8 +170,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
-                # act=("LeakyReLU", {"inplace": True}),
-                # norm=Norm.BATCH,
+                act=("LeakyReLU", {"inplace": True}),
+                norm=Norm.BATCH,
                 dropout=0.2,
             ),
         )
@@ -183,8 +186,8 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
                 num_res_units=2,
                 kernel_size=3,
                 up_kernel_size=3,
-                # act=("LeakyReLU", {"inplace": True}),
-                # norm=Norm.BATCH,
+                act=("LeakyReLU", {"inplace": True}),
+                norm=Norm.BATCH,
                 dropout=0.2,
             ), 
         )
@@ -218,14 +221,14 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         ray_values = clarity
         ndc_values = F.grid_sample(
             ray_values,
-            w2c_coords.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
+            w2c_coords.view(B, self.vol_shape, self.vol_shape, self.vol_shape, 3),
             mode='bilinear', 
             padding_mode='zeros', 
-            align_corners=True
+            align_corners=False
         )
         
         # Multiview can stack along batch dimension, last dimension is for X-ray
-        clarity_ct, clarity_xr = torch.split(ndc_values, n_views)
+        clarity_ct, clarity_xr = torch.split(ndc_values, split_size_or_sections=n_views, dim=0)
         clarity_ct = clarity_ct.mean(dim=0, keepdim=True)
         clarity = torch.cat([clarity_ct, clarity_xr])
 
@@ -348,7 +351,7 @@ class GridNeRVLightningModule(LightningModule):
             pe=self.pe,
             backbone=self.backbone,
         )
-        init_weights(self.inv_renderer)
+        # init_weights(self.inv_renderer)
         if self.ckpt:
             # load the checkpoint
             checkpoint = torch.load(self.ckpt, map_location=torch.device('cpu'))["state_dict"]
@@ -663,14 +666,14 @@ class GridNeRVLightningModule(LightningModule):
         if self.gan:
             # If --gan is set, optimize Unprojector, Camera as generator, and Discriminator with 2 optimizers
             optimizer_g = torch.optim.AdamW(list(self.inv_renderer.parameters()) 
-                                          + list(self.cam_settings.parameters()), lr=self.lr, betas=(0.5, 0.999))
-            optimizer_d = torch.optim.AdamW(self.critic_model.parameters(), lr=self.lr * 4, betas=(0.5, 0.999))
+                                          + list(self.cam_settings.parameters()), lr=self.lr, betas=(0.9, 0.999))
+            optimizer_d = torch.optim.AdamW(self.critic_model.parameters(), lr=self.lr * 4, betas=(0.9, 0.999))
             scheduler_g = torch.optim.lr_scheduler.MultiStepLR(optimizer_g, milestones=[100, 200], gamma=0.1)
             scheduler_d = torch.optim.lr_scheduler.MultiStepLR(optimizer_d, milestones=[100, 200], gamma=0.1)
             return [optimizer_g, optimizer_d], [scheduler_g, scheduler_d] 
         else:
             # 
-            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.5, 0.999))
+            optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, betas=(0.9, 0.999))
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1)
             return [optimizer], [scheduler]
 
