@@ -252,7 +252,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         ray_values = torch.add(figures.unsqueeze(1), clarity)
         ndc_values = F.grid_sample(
             ray_values,
-            w2c_coords.view(-1, self.shape, self.shape, self.shape, 3),
+            w2c_coords.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
             mode='bilinear', 
             padding_mode='zeros', 
             align_corners=True
