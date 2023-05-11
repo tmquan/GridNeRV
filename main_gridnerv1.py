@@ -211,39 +211,40 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         dist = 10.0 * torch.ones(B, device=_device)
         cameras = make_cameras(dist, elev, azim)
         
-        ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.n_pts_per_ray)
-        ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
+        # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.n_pts_per_ray)
+        # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
         
-        # Generate camera intrinsics and extrinsics
-        itransform = cameras.get_ndc_camera_transform().inverse()
-        ndc_coords = itransform.transform_points(ray_points)
-        # ray_values = torch.add(figures.unsqueeze(1), clarity)
-        ray_values = clarity
-        ndc_values = F.grid_sample(
-            ray_values,
-            ndc_coords.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
-            mode='bilinear', 
-            padding_mode='zeros', 
-            align_corners=True
-        )
-        
-        # # Generate a grid of ndc coordinates that covers the entire ndc volume
-        # ndc_z = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
-        # ndc_y = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
-        # ndc_x = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
-        # ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
-        # v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ndc_coords) # view to world
-        # w2c_coords = cameras.transform_points(v2w_coords) # world to ndc
-        
-        # ray_values = torch.add(figures.unsqueeze(1), clarity)
-        # # ray_values = clarity
+        # # Generate camera intrinsics and extrinsics
+        # itransform = cameras.get_ndc_camera_transform().inverse()
+        # ndc_coords = itransform.transform_points(ray_points)
+        # # ray_values = torch.add(figures.unsqueeze(1), clarity)
+        # ray_values = clarity
         # ndc_values = F.grid_sample(
         #     ray_values,
-        #     w2c_coords.view(B, self.vol_shape, self.vol_shape, self.vol_shape, 3),
+        #     ndc_coords.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
         #     mode='bilinear', 
         #     padding_mode='zeros', 
         #     align_corners=True
         # )
+        
+        # Generate a grid of ndc coordinates that covers the entire ndc volume
+        ndc_z = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        ndc_y = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        ndc_x = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
+        v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ndc_coords) # view to world
+        # w2c_coords = cameras.transform_points(v2w_coords) # world to ndc
+        # w2v_coords = cameras.get_world_to_view_transform().transform_points(ndc_coords) # world to view
+        
+        ray_values = torch.add(figures.unsqueeze(1), clarity)
+        # ray_values = clarity
+        ndc_values = F.grid_sample(
+            ray_values,
+            v2w_coords.view(B, self.vol_shape, self.vol_shape, self.vol_shape, 3),
+            mode='bilinear', 
+            padding_mode='zeros', 
+            align_corners=True
+        )
         
         # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.n_pts_per_ray)
         # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
