@@ -211,38 +211,39 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         dist = 10.0 * torch.ones(B, device=_device)
         cameras = make_cameras(dist, elev, azim)
         
-        # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.n_pts_per_ray)
-        # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
+        ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.n_pts_per_ray)
+        ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
         
-        # # Generate camera intrinsics and extrinsics
-        # itransform = cameras.get_ndc_camera_transform().inverse()
-        # ndc_points = itransform.transform_points(ray_points)
-        # ndc_values = F.grid_sample(
-        #     clarity,
-        #     ndc_points.view(-1, self.shape, self.shape, self.shape, 3),
-        #     mode='bilinear', 
-        #     padding_mode='zeros', 
-        #     align_corners=True
-        # )
-        
-        
-        # Generate a grid of ndc coordinates that covers the entire ndc volume
-        ndc_z = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
-        ndc_y = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
-        ndc_x = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
-        ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
-        v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ndc_coords) # view to world
-        w2c_coords = cameras.transform_points(v2w_coords) # world to ndc
-        
-        ray_values = torch.add(figures.unsqueeze(1), clarity)
-        # ray_values = clarity
+        # Generate camera intrinsics and extrinsics
+        itransform = cameras.get_ndc_camera_transform().inverse()
+        ndc_coords = itransform.transform_points(ray_points)
+        # ray_values = torch.add(figures.unsqueeze(1), clarity)
+        ray_values = clarity
         ndc_values = F.grid_sample(
             ray_values,
-            w2c_coords.view(B, self.vol_shape, self.vol_shape, self.vol_shape, 3),
+            ndc_coords.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
             mode='bilinear', 
             padding_mode='zeros', 
             align_corners=True
         )
+        
+        # # Generate a grid of ndc coordinates that covers the entire ndc volume
+        # ndc_z = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        # ndc_y = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        # ndc_x = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        # ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
+        # v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ndc_coords) # view to world
+        # w2c_coords = cameras.transform_points(v2w_coords) # world to ndc
+        
+        # ray_values = torch.add(figures.unsqueeze(1), clarity)
+        # # ray_values = clarity
+        # ndc_values = F.grid_sample(
+        #     ray_values,
+        #     w2c_coords.view(B, self.vol_shape, self.vol_shape, self.vol_shape, 3),
+        #     mode='bilinear', 
+        #     padding_mode='zeros', 
+        #     align_corners=True
+        # )
         
         # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.n_pts_per_ray)
         # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
@@ -269,16 +270,16 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             shcoeff = self.refiner_net(torch.cat([self.pebasis.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density, mixture], dim=1))
         else:
             density = self.density_net(torch.cat([clarity], dim=1))
+            density = torch.add(density, clarity)
             mixture = self.mixture_net(torch.cat([clarity, density], dim=1))
-            # print(clarity.shape, density.shape, mixture.shape)
+            mixture = torch.add(mixture, clarity)
             shcoeff = self.refiner_net(torch.cat([clarity, density, mixture], dim=1))
-
+            shcoeff = torch.add(shcoeff, clarity)
         if self.sh > 0:
             shcomps = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
         else:
             shcomps = shcoeff 
         volumes = shcomps
-        volumes = torch.add(volumes, clarity)
         volumes_ct, volumes_xr = torch.split(volumes, 1)
         volumes_ct = volumes_ct.repeat(n_views, 1, 1, 1, 1)
         volumes = torch.cat([volumes_ct, volumes_xr])
@@ -760,7 +761,7 @@ if __name__ == "__main__":
 
     # Callback
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_stn{int(hparams.stn)}",
+        dirpath=f"{hparams.logsdir}_sh{hparams.sh}_pe{hparams.pe}_cam{int(hparams.cam)}_gan{int(hparams.gan)}_sup{int(hparams.sup)}",
         # filename='epoch={epoch}-validation_loss={validation_loss_epoch:.2f}',
         monitor="validation_loss_epoch",
         auto_insert_metric_name=True, 
