@@ -198,7 +198,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             image_height=self.img_shape,
             n_pts_per_ray=self.n_pts_per_ray,  
             min_depth=8.0,
-            max_depth=12.0,
+            max_depth=4.0,
         )        
 
         
@@ -208,7 +208,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         # Process (resample) the clarity from ray views to ndc
         _device = figures.device
         B = figures.shape[0]
-        dist = 10.0 * torch.ones(B, device=_device)
+        dist = 6.0 * torch.ones(B, device=_device)
         cameras = make_cameras(dist, elev, azim)
         
         # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.n_pts_per_ray)
@@ -294,7 +294,7 @@ def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor, see
         elev=elev.float() * 90, 
         azim=azim.float() * 180
     )
-    return FoVPerspectiveCameras(R=R, T=T, fov=16, znear=8.0, zfar=12.0).to(_device)
+    return FoVPerspectiveCameras(R=R, T=T, fov=20, znear=4.0, zfar=8.0).to(_device)
 
 def torch_distributions_uniform_or_zeros(shape=[1, 1], device=torch.device('cpu')):
     rng = torch.randint(low=0, high=10, size=(1, 1))
@@ -371,8 +371,8 @@ class GridNeRVLightningModule(LightningModule):
             image_width=self.img_shape, 
             image_height=self.img_shape, 
             n_pts_per_ray=self.n_pts_per_ray, 
-            min_depth=8.0, 
-            max_depth=12.0, 
+            min_depth=4.0, 
+            max_depth=8.0, 
         )
         
         self.inv_renderer = GridNeRVFrontToBackInverseRenderer(
@@ -455,12 +455,12 @@ class GridNeRVLightningModule(LightningModule):
         # Construct the random cameras
         src_azim_random = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device)
         src_elev_random = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device)
-        src_dist_random = 10. * torch.ones(self.batch_size, device=_device)
+        src_dist_random = 6.0 * torch.ones(self.batch_size, device=_device)
         camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
         
         src_azim_locked = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device)
         src_elev_locked = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device)
-        src_dist_locked = 10. * torch.ones(self.batch_size, device=_device)
+        src_dist_locked = 6.0 * torch.ones(self.batch_size, device=_device)
         camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
 
         est_figure_ct_random = self.forward_screen(image3d=image3d, cameras=camera_random)
@@ -472,9 +472,9 @@ class GridNeRVLightningModule(LightningModule):
         else:
             src_figure_xr_hidden = image2d
 
-        est_dist_random = 10. * torch.ones(self.batch_size, device=_device)
-        est_dist_locked = 10. * torch.ones(self.batch_size, device=_device)
-        est_dist_hidden = 10. * torch.ones(self.batch_size, device=_device)
+        est_dist_random = 6.0 * torch.ones(self.batch_size, device=_device)
+        est_dist_locked = 6.0 * torch.ones(self.batch_size, device=_device)
+        est_dist_hidden = 6.0 * torch.ones(self.batch_size, device=_device)
 
         if self.cam:        
             # Reconstruct the cameras
