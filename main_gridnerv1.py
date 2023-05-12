@@ -60,17 +60,9 @@ class GridNeRVFrontToBackFrustumFeaturer(nn.Module):
             spatial_dims=2,
             in_channels=in_channels,
             num_classes=out_channels,
-            # pretrained=True, 
-            # adv_prop=True,
+            pretrained=True, 
+            adv_prop=True,
         )
-        # self.model = Regressor(
-        #     in_shape=(in_channels, shape, shape), 
-        #     out_shape=(out_channels), 
-        #     channels=backbones[backbone], 
-        #     strides=(2, 2, 2, 2, 2), 
-        #     norm=Norm.BATCH,
-            # dropout=0.2,
-        # )
 
     def forward(self, figures):
         camfeat = self.model.forward(figures)
@@ -208,57 +200,19 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         # Process (resample) the clarity from ray views to ndc
         _device = figures.device
         B = figures.shape[0]
-        dist = 6.0 * torch.ones(B, device=_device)
-        cameras = make_cameras(dist, elev, azim)
-        
-        # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.n_pts_per_ray)
-        # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
-        
-        # # Generate camera intrinsics and extrinsics
-        # itransform = cameras.get_ndc_camera_transform().inverse()
-        # ndc_coords = itransform.transform_points(ray_points)
-        # # ray_values = torch.add(figures.unsqueeze(1), clarity)
-        # ray_values = clarity
-        # ndc_values = F.grid_sample(
-        #     ray_values,
-        #     ndc_coords.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
-        #     mode='bilinear', 
-        #     padding_mode='zeros', 
-        #     align_corners=True
-        # )
-        
+
         # Generate a grid of ndc coordinates that covers the entire ndc volume
         ndc_z = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
         ndc_y = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
         ndc_x = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
         ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)    
-        v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ndc_coords) # view to world
-        # w2c_coords = cameras.transform_points(v2w_coords) # world to ndc
-        # w2v_coords = cameras.get_world_to_view_transform().transform_points(ndc_coords) # world to view
-        
-        ray_values = torch.add(figures.unsqueeze(1), clarity)
-        # ray_values = clarity
         ndc_values = F.grid_sample(
-            ray_values,
-            v2w_coords.view(B, self.vol_shape, self.vol_shape, self.vol_shape, 3),
+            clarity,
+            ndc_coords.view(B, self.vol_shape, self.vol_shape, self.vol_shape, 3),
             mode='bilinear', 
             padding_mode='zeros', 
             align_corners=True
         )
-        
-        # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.n_pts_per_ray)
-        # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
-        # # Generate camera intrinsics and extrinsics
-        # v2w_coords = cameras.get_world_to_view_transform().inverse().transform_points(ray_points) # view to world
-        # w2c_coords = cameras.transform_points(v2w_coords) # world to ndc
-        # ray_values = torch.add(figures.unsqueeze(1), clarity)
-        # ndc_values = F.grid_sample(
-        #     ray_values,
-        #     w2c_coords.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
-        #     mode='bilinear', 
-        #     padding_mode='zeros', 
-        #     align_corners=True
-        # )
         
         # Multiview can stack along batch dimension, last dimension is for X-ray
         clarity_ct, clarity_xr = torch.split(ndc_values, split_size_or_sections=n_views, dim=0)
@@ -270,12 +224,9 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             mixture = self.mixture_net(torch.cat([self.pebasis.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density], dim=1))
             shcoeff = self.refiner_net(torch.cat([self.pebasis.repeat(clarity.shape[0], 1, 1, 1, 1), clarity, density, mixture], dim=1))
         else:
-            density = self.density_net(torch.cat([clarity], dim=1))
-            density = torch.add(density, clarity)
-            mixture = self.mixture_net(torch.cat([clarity, density], dim=1))
-            mixture = torch.add(mixture, clarity)
-            shcoeff = self.refiner_net(torch.cat([clarity, density, mixture], dim=1))
-            shcoeff = torch.add(shcoeff, clarity)
+            density = self.density_net(torch.cat([clarity], dim=1)) # density = torch.add(density, clarity)
+            mixture = self.mixture_net(torch.cat([clarity, density], dim=1)) # mixture = torch.add(mixture, clarity)
+            shcoeff = self.refiner_net(torch.cat([clarity, density, mixture], dim=1)) # shcoeff = torch.add(shcoeff, clarity)
         if self.sh > 0:
             shcomps = torch.einsum('abcde,bcde->abcde', shcoeff, self.shbasis)
         else:
@@ -294,44 +245,7 @@ def make_cameras(dist: torch.Tensor, elev: torch.Tensor, azim: torch.Tensor, see
         elev=elev.float() * 90, 
         azim=azim.float() * 180
     )
-    return FoVPerspectiveCameras(R=R, T=T, fov=24, znear=4.0, zfar=8.0).to(_device)
-
-def torch_distributions_uniform_or_zeros(shape=[1, 1], device=torch.device('cpu')):
-    rng = torch.randint(low=0, high=10, size=(1, 1))
-    if rng>0:
-        return torch.distributions.uniform.Uniform(-1.0, 1.0).sample(shape).to(device)
-    else:
-        return torch.zeros(shape, device=device)
-
-def init_weights(net, init_type='kaiming', init_gain=0.02):
-    """Initialize network weights.
-    Parameters:
-        net (network)   -- network to be initialized
-        init_type (str) -- the name of an initialization method: normal | xavier | kaiming | orthogonal
-        init_gain (float)    -- scaling factor for normal, xavier and orthogonal.
-    We use 'normal' in the original pix2pix and CycleGAN paper. But xavier and kaiming might
-    work better for some applications. Feel free to try yourself.
-    """
-    def init_func(m):  # define the initialization function
-        classname = m.__class__.__name__
-        if hasattr(m, 'weight') and (classname.find('Conv') != -1 or classname.find('Linear') != -1):
-            if init_type == 'normal':
-                nn.init.normal_(m.weight.data, 0.0, init_gain)
-            elif init_type == 'xavier':
-                nn.init.xavier_normal_(m.weight.data, gain=init_gain)
-            elif init_type == 'kaiming':
-                nn.init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
-            elif init_type == 'orthogonal':
-                nn.init.orthogonal_(m.weight.data, gain=init_gain)
-            else:
-                raise NotImplementedError('initialization method [%s] is not implemented' % init_type)
-            if hasattr(m, 'bias') and m.bias is not None:
-                nn.init.constant_(m.bias.data, 0.0)
-        elif classname.find('BatchNorm') != -1:  # BatchNorm Layer's weight is not a matrix; only normal distribution applies.
-            nn.init.normal_(m.weight.data, 1.0, init_gain)
-            nn.init.constant_(m.bias.data, 0.0)
-    # print('initialize network with %s' % init_type)
-    net.apply(init_func)  # apply the initialization function <init_func>
+    return FoVPerspectiveCameras(R=R, T=T, fov=16, znear=8.0, zfar=12.0).to(_device)
     
 class GridNeRVLightningModule(LightningModule):
     def __init__(self, hparams, **kwargs):
@@ -371,8 +285,8 @@ class GridNeRVLightningModule(LightningModule):
             image_width=self.img_shape, 
             image_height=self.img_shape, 
             n_pts_per_ray=self.n_pts_per_ray, 
-            min_depth=4.0, 
-            max_depth=8.0, 
+            min_depth=8.0, 
+            max_depth=12.0, 
         )
         
         self.inv_renderer = GridNeRVFrontToBackInverseRenderer(
@@ -413,7 +327,6 @@ class GridNeRVLightningModule(LightningModule):
                 out_channels=2, 
                 backbone=self.backbone,
             )
-            init_weights(self.cam_settings)
             torch.nn.init.trunc_normal_(self.cam_settings.model._fc.weight.data, mean=0.0, std=0.05, a=-0.05, b=0.05)
             torch.nn.init.trunc_normal_(self.cam_settings.model._fc.bias.data, mean=0.0, std=0.05, a=-0.05, b=0.05)
             # self.cam_settings.model._fc.weight.data.random_()
@@ -423,9 +336,7 @@ class GridNeRVLightningModule(LightningModule):
 
         self.train_step_outputs = []
         self.validation_step_outputs = []
-        # self.loss = nn.SmoothL1Loss(reduction="mean", beta=0.1)
         self.loss = nn.L1Loss(reduction="mean")
-        # self.pips = LearnedPerceptualImagePatchSimilarity(net_type='vgg', normalize=True)
         
     # Spatial transformer network forward function
     def forward_affine(self, x):
@@ -455,12 +366,12 @@ class GridNeRVLightningModule(LightningModule):
         # Construct the random cameras
         src_azim_random = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device)
         src_elev_random = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device)
-        src_dist_random = 6.0 * torch.ones(self.batch_size, device=_device)
+        src_dist_random = 10.0 * torch.ones(self.batch_size, device=_device)
         camera_random = make_cameras(src_dist_random, src_elev_random, src_azim_random)
         
         src_azim_locked = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device)
         src_elev_locked = torch.distributions.uniform.Uniform(-1.0, 1.0).sample([self.batch_size]).to(_device)
-        src_dist_locked = 6.0 * torch.ones(self.batch_size, device=_device)
+        src_dist_locked = 10.0 * torch.ones(self.batch_size, device=_device)
         camera_locked = make_cameras(src_dist_locked, src_elev_locked, src_azim_locked)
 
         est_figure_ct_random = self.forward_screen(image3d=image3d, cameras=camera_random)
@@ -472,9 +383,9 @@ class GridNeRVLightningModule(LightningModule):
         else:
             src_figure_xr_hidden = image2d
 
-        est_dist_random = 6.0 * torch.ones(self.batch_size, device=_device)
-        est_dist_locked = 6.0 * torch.ones(self.batch_size, device=_device)
-        est_dist_hidden = 6.0 * torch.ones(self.batch_size, device=_device)
+        est_dist_random = 10.0 * torch.ones(self.batch_size, device=_device)
+        est_dist_locked = 10.0 * torch.ones(self.batch_size, device=_device)
+        est_dist_hidden = 10.0 * torch.ones(self.batch_size, device=_device)
 
         if self.cam:        
             # Reconstruct the cameras
@@ -563,16 +474,10 @@ class GridNeRVLightningModule(LightningModule):
         im3d_loss_ct = im3d_loss_ct_random + im3d_loss_ct_locked
         im3d_loss = im3d_loss_ct
         
-        # pips_loss_ct_random = self.pips(est_figure_ct_random.repeat(1,3,1,1), rec_figure_ct_random.repeat(1,3,1,1)) 
-        # pips_loss_ct_locked = self.pips(est_figure_ct_locked.repeat(1,3,1,1), rec_figure_ct_locked.repeat(1,3,1,1)) 
-        # pips_loss_xr_hidden = self.pips(src_figure_xr_hidden.repeat(1,3,1,1), est_figure_xr_hidden.repeat(1,3,1,1)) 
-        # pips_loss = pips_loss_ct_random + pips_loss_ct_locked + pips_loss_xr_hidden
-        
         self.log(f'{stage}_im2d_loss', im2d_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
         self.log(f'{stage}_im3d_loss', im3d_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
-        # self.log(f'{stage}_pips_loss', pips_loss, on_step=(stage=='train'), prog_bar=True, logger=True, sync_dist=True, batch_size=self.batch_size)
 
-        p_loss = self.gamma*im2d_loss + self.alpha*im3d_loss #+ self.delta*pips_loss
+        p_loss = self.gamma*im2d_loss + self.alpha*im3d_loss 
         
         if self.cam:
             view_loss_ct_random = self.loss(torch.cat([src_azim_random, src_elev_random]), 
