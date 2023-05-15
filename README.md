@@ -8,7 +8,7 @@ pip install -U monai[all]
 pip install -U diffusers
 pip install -U lightning
 pip install -U transformers
-pip install git+https://github.com/tatp22/multidim-positional-encoding 
+pip install -U nerfstudio
 # pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu113
 # conda install pytorch3d -c pytorch3d

@@ -237,7 +237,7 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         ndc_y = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
         ndc_x = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
         ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)   
-        ndc_points = cameras.transform_point_ndc(ndc_coords) # world to ndc
+        ndc_points = cameras.transform_points_ndc(ndc_coords) # world to ndc
         ndc_values = F.grid_sample(
             clarity,
             ndc_points.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
