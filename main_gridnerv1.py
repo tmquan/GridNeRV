@@ -192,7 +192,6 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
             min_depth=8.0,
             max_depth=4.0,
         )        
-
         
     def forward(self, figures, azim, elev, n_views=2):
         clarity = self.clarity_net(figures, azim*900, elev*1800)[0].view(-1, 1, self.n_pts_per_ray, self.img_shape, self.img_shape)
@@ -216,33 +215,37 @@ class GridNeRVFrontToBackInverseRenderer(nn.Module):
         # )
         
         ###
-        # # Process (resample) the clarity from ray views to ndc
         # dist = 10.0 * torch.ones(B, device=_device)
         # cameras = make_cameras(dist, elev, azim)
+        # R_ = cameras.R
+        # T_ = cameras.T
+        # RT = torch.cat([R_.view(B, 3, 3), torch.zeros_like(T_).view(B, 3, 1)], dim=-1)
+        # grid = F.affine_grid(RT, clarity.size())
+        # ndc_values = F.grid_sample(clarity, grid)
+        # # grid = F.affine_grid(theta, x.size())
+        # # xs = F.grid_sample(x, grid)
+
+        ###
+        # Process (resample) the clarity from ray views to ndc
+        dist = 10.0 * torch.ones(B, device=_device)
+        cameras = make_cameras(dist, elev, azim)
         # ray_bundle = self.raysampler.forward(cameras=cameras, n_pts_per_ray=self.vol_shape) # Special treat here
         # ray_points = ray_bundle_to_ray_points(ray_bundle).view(B, -1, 3) 
         
-        # # Generate camera intrinsics and extrinsics
-        # itransform = cameras.get_ndc_camera_transform().inverse()
-        # ndc_points = itransform.transform_points(ray_points)
-        # ndc_values = F.grid_sample(
-        #     clarity,
-        #     ndc_points.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
-        #     mode='bilinear', 
-        #     padding_mode='zeros', 
-        #     align_corners=True
-        # )
+        # 
+        ndc_z = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        ndc_y = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        ndc_x = torch.linspace(-1, 1, steps=self.vol_shape, device=_device)
+        ndc_coords = torch.stack(torch.meshgrid(ndc_x, ndc_y, ndc_z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)   
+        ndc_points = cameras.transform_point_ndc(ndc_coords) # world to ndc
+        ndc_values = F.grid_sample(
+            clarity,
+            ndc_points.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3),
+            mode='bilinear', 
+            padding_mode='zeros', 
+            align_corners=True
+        )
         
-        dist = 10.0 * torch.ones(B, device=_device)
-        cameras = make_cameras(dist, elev, azim)
-        R_ = cameras.R
-        T_ = cameras.T
-        RT = torch.cat([R_.view(B, 3, 3), torch.zeros_like(T_).view(B, 3, 1)], dim=-1)
-        grid = F.affine_grid(RT, clarity.size())
-        ndc_values = F.grid_sample(clarity, grid)
-        # grid = F.affine_grid(theta, x.size())
-        # xs = F.grid_sample(x, grid)
-    
         # Multiview can stack along batch dimension, last dimension is for X-ray
         clarity_ct, clarity_xr = torch.split(ndc_values, split_size_or_sections=n_views, dim=0)
         clarity_ct = clarity_ct.mean(dim=0, keepdim=True)
