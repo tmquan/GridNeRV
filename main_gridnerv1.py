@@ -732,7 +732,7 @@ if __name__ == "__main__":
         precision=16 if hparams.amp else 32,
         # gradient_clip_val=0.01, 
         # gradient_clip_algorithm="value"
-        # stochastic_weight_avg=True if not hparams.gan else False,
+        stochastic_weight_avg=True if not hparams.gan else False,
         # deterministic=False,
         profiler="advanced"
     )
